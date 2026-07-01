@@ -101,7 +101,7 @@ class _RadialTraceTransform(nn.Module):
             dim=-1,
         )
         grid = grid.unsqueeze(0).expand(B, -1, -1, -1)  # (B, H, W_out, 2)
-        return F.grid_sample(x, grid, mode="bilinear", padding_mode="zeros", align_corners=True)
+        return F.grid_sample(x, grid, mode="bilinear", padding_mode="border", align_corners=True)
 
     def inverse(self, x_rt: torch.Tensor, H_orig: int, W_orig: int) -> torch.Tensor:
         """Inverse RT: (B, C, H, W_rt)_(t',v) → (B, C, H_orig, W_orig)_(t,x)."""
@@ -130,7 +130,7 @@ class _RadialTraceTransform(nn.Module):
 
         grid = torch.stack([v_idx_norm, t_idx_norm], dim=-1)  # (H_orig, W_orig, 2)
         grid = grid.unsqueeze(0).expand(B, -1, -1, -1)
-        return F.grid_sample(x_rt, grid, mode="bilinear", padding_mode="zeros", align_corners=True)
+        return F.grid_sample(x_rt, grid, mode="bilinear", padding_mode="border", align_corners=True)
 
 
 # ---------------------------------------------------------------------------
@@ -166,10 +166,12 @@ class _DnCNNBlock(nn.Module):
             nn.Conv2d(base_channels, out_channels, kernel_size=kernel_size, padding=pad, bias=False)
         )
         self.net = nn.Sequential(*layers)
+        # Learnable output gain — initialised to 1.0 since BN normalises RT features
+        self.gain = nn.Parameter(torch.tensor(1.0))
         self._initialize_weights()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.net(x)
+        return self.net(x) * self.gain
 
     def _initialize_weights(self) -> None:
         for m in self.modules():
@@ -225,7 +227,7 @@ class DFBCNN(nn.Module):
         self,
         in_channels: int = 1,
         out_channels: int = 1,
-        lowpass_sigma: float = 5.0,
+        lowpass_sigma: float = 1.5,
         v_max: float = 3200.0,
         n_velocities: int = 0,
         cnn1_kernel_size: int = 5,
@@ -245,6 +247,11 @@ class DFBCNN(nn.Module):
         self.in_channels = in_channels
         self.lowpass = _GaussianLowPass(sigma=lowpass_sigma, channels=in_channels)
         self.rt = _RadialTraceTransform(v_max=v_max, n_velocities=n_velocities if n_velocities > 0 else 9999)
+
+        # BN before DnCNN to normalise RT-domain features (compensates Gaussian + RT attenuation).
+        # track_running_stats=False → always use batch stats so train/eval behaviour is identical.
+        self.norm_low = nn.BatchNorm2d(in_channels, track_running_stats=False)
+        self.norm_high = nn.BatchNorm2d(in_channels, track_running_stats=False)
 
         self.cnn1 = _DnCNNBlock(
             in_channels=in_channels,
@@ -283,6 +290,10 @@ class DFBCNN(nn.Module):
         # 2. Forward RT transform
         rt_low = self.rt(x_low)
         rt_high = self.rt(x_high)
+
+        # 2b. Batch-norm RT features → normalised input for DnCNN blocks
+        rt_low = self.norm_low(rt_low)
+        rt_high = self.norm_high(rt_high)
 
         # 3. Noise prediction in RT domain (residual sub-networks)
         noise_rt_low = self.cnn1(rt_low)

@@ -24,7 +24,7 @@ data:
     test: 1
 
   loader:
-    batch_size: 32
+    batch_size: 12
     num_workers: 4
     pin_memory: true
 

@@ -287,9 +287,7 @@ class PhysicsConstrainedDNN(nn.Module):
         )
         self.mpic_blocks: nn.ModuleList | None = None
 
-        # Output projection: BN → ReLU → 1×1 Conv (better than bare 1×1 Conv)
-        self.output_bn = nn.BatchNorm2d(n_channels)
-        self.output_act = nn.ReLU(inplace=True)
+        # Output projection: 1×1 Conv (no activation — noise is zero-mean)
         self.fc_out = nn.Conv2d(n_channels, out_channels, kernel_size=1, bias=True)
 
         self._initialized = False
@@ -298,12 +296,20 @@ class PhysicsConstrainedDNN(nn.Module):
     def _init_weights(self) -> None:
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
-                if m.kernel_size == (1, 1):
+                if m is self.fc_out:
+                    # Output layer: small init → start predicting near-zero noise
+                    # (but not so small that the model can never scale up)
+                    nn.init.normal_(m.weight, mean=0.0, std=1e-2)
+                    if m.bias is not None:
+                        nn.init.constant_(m.bias, 0)
+                elif m.kernel_size == (1, 1):
                     nn.init.xavier_uniform_(m.weight)
+                    if m.bias is not None:
+                        nn.init.constant_(m.bias, 0)
                 else:
                     nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
+                    if m.bias is not None:
+                        nn.init.constant_(m.bias, 0)
             elif isinstance(m, nn.BatchNorm2d):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
@@ -351,9 +357,7 @@ class PhysicsConstrainedDNN(nn.Module):
         for block in self.mpic_blocks:
             h = block(h)
 
-        # Output projection
-        h = self.output_bn(h)
-        h = self.output_act(h)
+        # Output projection (no activation — noise is zero-mean with both signs)
         out = self.fc_out(h)                    # (B, out_channels, H, W)
 
         return out
