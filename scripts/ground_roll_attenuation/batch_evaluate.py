@@ -83,6 +83,8 @@ MODEL_DISPLAY = {
     "enhanced_atten_unet": "Enhanced Atten-UNet",
     "sanet": "SANet",
     "physics_unet": "Physics CNN",
+    "physics_dnn": "Physics-Constrained DNN",
+    "dfb_cnn": "DFB-CNN",
     "pix2pix": "Pix2Pix cGAN",
     "ddpm": "DDPM cDDPM",
 }
@@ -92,7 +94,7 @@ MODEL_ROW_ORDER = [
     "dncnn",
     "atten_unet", "atten_unet_plus",
     "enhanced_atten_unet",
-    "sanet", "physics_unet", "pix2pix", "ddpm",
+    "sanet", "physics_unet", "physics_dnn", "dfb_cnn", "pix2pix", "ddpm",
 ]
 
 

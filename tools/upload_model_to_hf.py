@@ -7,7 +7,7 @@ Usage:
     python tools/upload_model_to_hf.py --models unet res_unet
 
 Choose from: unet, res_unet, dncnn, atten_unet, enhanced_unet, ddpm,
-              pix2pix, sanet, physics
+              pix2pix, sanet, physics, physics_dnn, dfb_cnn
 
 Optional:
     --repo-name NAME     HF repo name (default: ground-roll-attenuation)
@@ -57,6 +57,8 @@ MODEL_DISPLAY = {
     "enhanced_atten_unet": "Enhanced Atten-UNet",
     "sanet": "SANet",
     "physics_unet": "Physics CNN",
+    "physics_dnn": "Physics-Constrained DNN",
+    "dfb_cnn": "DFB-CNN",
     "pix2pix": "Pix2Pix cGAN",
     "ddpm": "DDPM cDDPM",
 }
@@ -72,6 +74,8 @@ MODEL_DESCRIPTION = {
     "enhanced_atten_unet": "U-Net with residual blocks + attention-gated skip connections, trained with hybrid MSE + AFM (adaptive frequency modulation) loss. Predicts noise residual. Base channels: 32, depth: 4.",
     "sanet": "Soft Attention Network: multi-branch parallel convs (3×3, 5×5, 7×7) + spatial soft attention + residual blocks. Base channels: 32, 8 blocks.",
     "physics_unet": "Physics-constrained 3-CNN separation network with f-k domain classifier for signal/ground-roll separation. Asymmetric kernels (7×21, 3×9). Base channels: 32, 3 levels.",
+    "physics_dnn": "Physically constrained DNN with MPIC (Multi-modality Physical Information Constraint) Blocks — parallel spatial, frequency, and Hilbert-domain branches + SDPAF pre-activation. Feature channels: 32, 4 blocks.",
+    "dfb_cnn": "Dual-Filter-Bank CNN with two DnCNN-style subnetworks (5×5 kernel for low-freq, 3×3 for high-freq) operating in the radial-trace (RT) domain. Low-freq CNN: 9 layers, 100 feat; High-freq CNN: 5 layers, 64 feat.",
     "pix2pix": "Pix2Pix cGAN with 7-level U-Net generator (Conv4×4 stride 2, LeakyReLU) and 4-level PatchGAN discriminator. Trained with adversarial + L1 (λ=100) loss.",
     "ddpm": "Conditional DDPM (DDPM-2c) jointly modeling signal and ground-roll distributions. Modified U-Net with time embedding, self-attention bottleneck, 5 ResNet levels.",
 }
@@ -87,7 +91,7 @@ _MODEL_ALIASES = {
 _ALL_MODELS = sorted(
     ["unet", "unet_plus", "res_unet", "res_unet_plus", "dncnn",
      "atten_unet", "atten_unet_plus", "enhanced_atten_unet",
-     "ddpm", "pix2pix", "sanet", "physics_unet"]
+     "ddpm", "pix2pix", "sanet", "physics_unet", "physics_dnn", "dfb_cnn"]
 )
 
 _VALID_MODEL_NAMES = sorted(list(_MODEL_ALIASES.keys()) + _ALL_MODELS)
@@ -317,7 +321,7 @@ def _build_results_section(eval_data: dict) -> str:
 
     # row order: raw first, then models in MODEL_ROW_ORDER from batch_evaluate.py
     row_order = ["raw", "unet", "res_unet", "dncnn", "atten_unet",
-                 "enhanced_atten_unet", "sanet", "physics_unet", "pix2pix", "ddpm"]
+                 "enhanced_atten_unet", "sanet", "physics_unet", "physics_dnn", "dfb_cnn", "pix2pix", "ddpm"]
 
     lines = ["## Results\n"]
     lines.append("Mean ± std over 3 seeds on the held-out test shot (FFID=9), evaluated on 2D-flattened data in the normalized domain. Raw (noisy) is the input before denoising.\n")

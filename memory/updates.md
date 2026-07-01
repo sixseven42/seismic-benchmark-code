@@ -534,3 +534,38 @@
   - Renamed the benchmark document to `docs/benchmark_ground_roll_attenuation.md`; updated top-level README, Chinese usage guide, and HF model upload/download defaults away from the old coherent-noise task name.
 - Impact: New task directories are self-contained and no regular source/docs path references the deleted `coherent_noise_attenuation` package. `memory/updates.md` keeps older entries unchanged as historical records.
 - Follow-up: When multiples SEG-Y data is generated, verify the configured `/data/shared/benchmark/multiples` paths against the actual data root.
+
+## 2026-07-01 - Add DFB-CNN model for ground-roll attenuation
+
+- Context: Added the Dual-Filter-Bank CNN (Zhang & van der Baan, 2022, IEEE TGRS) as a new ground-roll attenuation model. The paper proposes two DnCNN-style subnetworks with different kernel sizes (5×5 for low-freq, 3×3 for high-freq) processing data in the radial-trace (RT) domain after a Gaussian low-pass frequency split.
+- Change:
+  - `model/ground_roll_attenuation/dfb_cnn.py` (new): Implements DFB-CNN with:
+    - `_GaussianLowPass` — spatial-domain Gaussian filter for frequency separation.
+    - `_RadialTraceTransform` — differentiable forward/inverse RT transform via `F.grid_sample`.
+    - `_DnCNNBlock` — DnCNN-style sub-network with residual output (shared helper).
+    - `DFBCNN` (`@register_model("dfb_cnn")`) — full pipeline: low-pass split → RT → dual CNN → IRT → combine. Noise-predicting (residual learning), compatible with existing `metrics_on_denoised_signal=True`.
+  - `model/ground_roll_attenuation/__init__.py`: added `from . import dfb_cnn` for registry side-effects.
+  - `configs/ground_roll_attenuation/denoise_dfb_cnn.yaml` (new): follows existing paired-SEG-Y denoise config pattern; model params match paper defaults (CNN1: k=5, depth=9, 100 feat; CNN2: k=3, depth=5, 64 feat; v_max=3200; batch_size=32, lr=1e-3→1e-5, 50 epochs).
+  - `scripts/ground_roll_attenuation/train_denoise_dfb_cnn.py` (new): standard denoise training entry point (identical structure to `train_denoise_dncnn.py`), auto-detects `data.*_pair`, supports shot-level FFID splitting and DDP.
+  - `model/ground_roll_attenuation/reproduction/DFB-CNN_reproduction.md` (new): algorithm reproduction notes covering pipeline, RT transform theory, training strategy, and reproduction adaptations.
+- Impact: DFB-CNN is available as a drop-in model (`type: dfb_cnn`) usable with the existing denoise training pipeline without changes to `utils/`, `tools/`, or other scripts. The RT transform and frequency split are implemented inside the model's forward pass, preserving the existing patch-based data flow.
+- Follow-up: If RT transform on full shots (before patchify) is preferred to match the paper exactly, move the RT+frequency-split logic into `_patchify_pairs`. The current in-model implementation is simpler and avoids changing the shared training infrastructure.
+- Reference: Zhang & van der Baan, "Ground-Roll Attenuation Using a Dual-Filter-Bank Convolutional Neural Network," IEEE TGRS, vol. 60, 2022, 5907511.
+
+## 2026-07-01 - Add Physics-Constrained DNN model for ground-roll attenuation
+
+- Context: Added the Physics-Constrained Deep Neural Network (Liu et al., 2025, IEEE TGRS) as a new ground-roll attenuation model. The paper proposes MPIC (Multi-modality Physical Information Constraint) Blocks with parallel spatial, frequency, and Hilbert-domain branches plus an SDPAF pre-activation that boosts weak signals. Physical constraints (frequency mask suppressing low-freq noise) guide the optimizer toward physically plausible solutions, reducing underfitting under small-sample training.
+- Change:
+  - `model/ground_roll_attenuation/physics_dnn.py` (new): Implements Physics-Constrained DNN with:
+    - `SDPAF` — smooth ``x + beta * tanh(gamma * x)`` approximation of the paper's piecewise Seismic Data Preprocessing Activation Function, amplifying weak signals while preserving strong ones.
+    - `_FrequencyMask` — learnable sigmoid frequency mask computed dynamically per input shape; suppresses low frequencies (ground-roll) while passing high frequencies (reflections).
+    - `_SpatialModality` / `_FrequencyModality` / `_HilbertModality` — three parallel modality branches per MPIC Block.
+    - `_MPICBlock` — multi-modality block with spatial conv, frequency (rFFT → mask → irFFT), Hilbert (analytic signal) branches, residual connection, BN, and ReLU.
+    - `PhysicsConstrainedDNN` (`@register_model("physics_dnn")`) — full pipeline: optional SDPAF → FC_in (1×1 Conv + coord grid) → MPIC Block × N → FC_out (1×1 Conv). Noise-predicting (residual learning), compatible with existing `metrics_on_denoised_signal=True`. Fully adaptive to arbitrary patch sizes via lazy MPIC Block initialisation and dynamic frequency mask computation.
+  - `model/ground_roll_attenuation/__init__.py`: added `from . import physics_dnn` for registry side-effects.
+  - `configs/ground_roll_attenuation/denoise_physics_dnn.yaml` (new): follows existing paired-SEG-Y denoise config pattern; model params: n_channels=32, n_mpic_blocks=4, all three modalities enabled, SDPAF enabled, lr=1e-3→1e-5 (cosine), 300 epochs.
+  - `scripts/ground_roll_attenuation/train_denoise_physics_dnn.py` (new): standard denoise training entry point (identical structure to `train_denoise_dncnn.py`), auto-detects `data.*_pair`, supports shot-level FFID splitting and DDP.
+  - `model/ground_roll_attenuation/reproduction/PhysicsConstrainedDNN_reproduction.md` (new): algorithm reproduction notes covering SDPAF, MPIC Block design, three modality types, loss function, and reproduction adaptations.
+- Impact: Physics-Constrained DNN is available as `type: physics_dnn`, usable with the existing denoise training pipeline without changes to `utils/`, `tools/`, or other scripts. The physical constraints (frequency mask, Hilbert scaling) and SDPAF are implemented inside the model's forward pass. The model is lightweight (~37K params for default config, vs ~1.87M for DFB-CNN).
+- Follow-up: If full-shot SDPAF preprocessing is preferred (instead of per-patch in-model), move SDPAF into `_preprocess_shots`. The current in-model implementation keeps the preprocessing pipeline unchanged.
+- Reference: Liu et al., "Near-Surface-Related Nonstationary Coherent Noise Suppression Using a Physically Constrained Deep Neural Network," IEEE TGRS, vol. 63, 2025, 5903010.
