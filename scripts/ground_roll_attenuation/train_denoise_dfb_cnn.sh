@@ -6,8 +6,8 @@
 set -euo pipefail
 
 # ---------- Configuration ----------
-CUDA_VISIBLE_DEVICES="0,1" # physical GPUs, comma-separated
-NPROC_PER_NODE=2           # must match the number of visible GPUs
+CUDA_VISIBLE_DEVICES="0,1,2,6" # physical GPUs, comma-separated
+NPROC_PER_NODE=4           # must match the number of visible GPUs
 NOISE_LEVELS=(1.0 3.0 5.0 7.0 9.0)  # noise intensities to run
 N_SEEDS=3                  # number of seeds per noise level
 START_SEED=42              # first seed; subsequent seeds are START_SEED+1, START_SEED+2, ...

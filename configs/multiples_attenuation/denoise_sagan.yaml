@@ -1,0 +1,88 @@
+# Paired noise prediction using the Tao et al. SAGAN U-Net generator.
+# The Markov discriminator is implemented in model/multiples_attenuation/sagan.py,
+# but the existing supervised denoise trainer optimizes the generator only.
+
+experiment:
+  name: denoise_sagan_base0706
+  output_dir: /data/shared/benchmark/multiples/results
+  seed: 42
+  device: cuda:4
+
+data:
+  segy_pair:
+    input_path: /data/shared/benchmark/multiples/noisy/total_nodw.sgy
+    target_path: /data/shared/benchmark/multiples/noise/multiples.sgy
+    traces_per_shot: 638
+    time_downsample: 1
+
+  shot_split:
+    train: 510
+    val: 64
+    test: 64
+
+  loader:
+    batch_size: 2
+    num_workers: 4
+    pin_memory: true
+
+preprocess:
+  normalize_mode: mean_std
+  normalize_scope: global
+  patch_time: 512
+  patch_trace: 256
+  patch_overlap: 0.5
+  max_shots: null
+
+model:
+  type: sagan
+  params:
+    in_channels: 1
+    out_channels: 1
+    base_channels: 64
+    norm: none
+    final_activation: identity
+
+loss:
+  type: mse
+  params:
+    reduction: mean
+
+metrics:
+  - name: snr
+    params: { reduction: per_sample, min_signal_energy: 1.0e-8 }
+  - name: psnr
+    params: { data_range: 1.0, reduction: per_sample }
+  - name: ssim
+    params: { data_range: 2.0, window_size: 11, sigma: 1.5 }
+  - name: mae
+    params: {}
+  - name: mse
+    params: {}
+  - name: rmse
+    params: { reduction: per_sample }
+
+optim:
+  type: adam
+  params:
+    lr: 1.0e-3
+    betas: [0.9, 0.999]
+
+scheduler:
+  type: cosine
+  params:
+    min_lr: 1.0e-6
+
+train:
+  epochs: 200
+  grad_clip: 1.0
+  log_step: false
+  log_interval: 10
+  eval_interval: 1
+  ckpt_interval: 20
+  vis_interval: 5
+  resume: null
+
+log:
+  log_dir: logs
+  plot_interval: 5
+

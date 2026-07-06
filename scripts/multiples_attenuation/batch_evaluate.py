@@ -11,7 +11,7 @@ Usage::
     # Only evaluate specific models
     python scripts/multiples_attenuation/batch_evaluate.py \\
         --root_dir /data/shared/benchmark/multiples/results \\
-        --models unet res_unet dncnn atten_unet \\
+        --models unet res_unet dncnn atten_unet kiraz_trace_cnn sagan dnndat \\
         --output results/batch_evaluation_part.xlsx
 
     # Merge into existing Excel without re-evaluating already-done models
@@ -79,12 +79,18 @@ MODEL_DISPLAY = {
     "dncnn": "DnCNN",
     "atten_unet": "Attention UNet",
     "atten_unet_plus": "Attention UNet-Plus",
+    "kiraz_trace_cnn": "Kiraz Trace CNN",
+    "sagan": "SAGAN",
+    "dnndat": "DNNDAT",
 }
 MODEL_ROW_ORDER = [
     "unet", "unet_plus",
     "res_unet", "res_unet_plus",
     "dncnn",
     "atten_unet", "atten_unet_plus",
+    "kiraz_trace_cnn",
+    "sagan",
+    "dnndat",
 ]
 
 
