@@ -921,8 +921,9 @@ def evaluate_first_break(
         total_loss += float(loss.detach().item())
         n_batches += 1
 
+        pred_for_metric = pred[0] if isinstance(pred, (tuple, list)) else pred
         for name, metric in (metrics or {}).items():
-            value = float(metric(pred, y, target_pick=target_pick))
+            value = float(metric(pred_for_metric, y, target_pick=target_pick))
             if np.isfinite(value):
                 metric_sums[name] += value
                 metric_counts[name] += 1

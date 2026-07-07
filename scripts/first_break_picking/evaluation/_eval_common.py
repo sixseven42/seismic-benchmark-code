@@ -349,6 +349,8 @@ def _run_inference_on_segment(
         end = min(start + batch_size, n_patches)
         batch = torch.from_numpy(patches[start:end]).to(device, non_blocking=True)
         logits = model(batch)
+        if isinstance(logits, (tuple, list)):
+            logits = logits[0]
         probs = torch.sigmoid(logits).cpu().numpy()
         if probs.ndim == 4 and probs.shape[1] == 1:
             probs = probs[:, 0, :, :]

@@ -691,7 +691,9 @@ class GatherCoverage(_BinaryMetric):
 
 
 # Backward-compatible aliases used in existing first-break configs.
+METRIC_REGISTRY["GatherCoverage"] = GatherCoverage
 METRIC_REGISTRY["MeanAbsoluteError"] = PickMAE
+METRIC_REGISTRY["MeanBiasError"] = MeanBiasError
 METRIC_REGISTRY["RootMeanSquaredError"] = PickRMSE
 
 

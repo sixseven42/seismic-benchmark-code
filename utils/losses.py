@@ -213,6 +213,101 @@ class MaskedBCEWithLogitsLoss(BaseLoss):
         )
 
 
+# ----------------------------------------------------------------------
+# First-break HUNet deep supervision loss
+# ----------------------------------------------------------------------
+@register_loss("first_break_hunet")
+class FirstBreakHUNetLoss(BaseLoss):
+    """First-break HUNet deep supervision loss.
+
+    L = BCE_Dice(fused, target) + side_weight × Σ BCE_Dice(side_i, target)
+
+    Expects pred as ``(fused, side_outputs)`` when the model uses
+    ``return_sides=True``, where ``side_outputs`` is a list of tensors
+    from deep supervision branches. If pred is a plain tensor, falls
+    back to simple BCE+Dice.
+    """
+
+    def __init__(
+        self,
+        side_weight: float = 0.5,
+        bce_weight: float = 0.5,
+        dice_weight: float = 0.5,
+        smooth: float = 1.0,
+        pos_weight: Optional[float] = None,
+    ) -> None:
+        super().__init__()
+        self.side_weight = float(side_weight)
+        self.bce_weight = float(bce_weight)
+        self.dice_weight = float(dice_weight)
+        self.smooth = float(smooth)
+        if pos_weight is None:
+            self.register_buffer("pos_weight", None)
+        else:
+            self.register_buffer("pos_weight", torch.tensor(float(pos_weight)))
+
+    @staticmethod
+    def _bce_dice(
+        pred: torch.Tensor,
+        target: torch.Tensor,
+        bce_weight: float,
+        dice_weight: float,
+        smooth: float,
+        pos_weight: Optional[torch.Tensor],
+    ) -> torch.Tensor:
+        valid = target >= 0
+        if not bool(valid.any()):
+            return pred.sum() * 0.0
+        target_clamped = target.clamp_min(0.0).to(dtype=pred.dtype)
+        valid_f = valid.to(dtype=pred.dtype)
+        loss = pred.new_tensor(0.0)
+        if bce_weight:
+            pw = pos_weight
+            if pw is not None:
+                pw = pw.to(device=pred.device, dtype=pred.dtype)
+            bce = nn.functional.binary_cross_entropy_with_logits(
+                pred[valid], target_clamped[valid],
+                pos_weight=pw, reduction="mean",
+            )
+            loss = loss + bce_weight * bce
+        if dice_weight:
+            prob = torch.sigmoid(pred) * valid_f
+            target_valid = target_clamped * valid_f
+            dims = tuple(range(1, prob.dim()))
+            intersection = (prob * target_valid).sum(dim=dims)
+            denom = prob.sum(dim=dims) + target_valid.sum(dim=dims)
+            dice = (2.0 * intersection + smooth) / (denom + smooth)
+            sample_has_valid = valid_f.sum(dim=dims) > 0
+            if bool(sample_has_valid.any()):
+                loss = loss + dice_weight * (1.0 - dice[sample_has_valid].mean())
+        return loss
+
+    def forward(
+        self,
+        pred: torch.Tensor,
+        target: Optional[torch.Tensor] = None,
+        **extras: Any,
+    ) -> torch.Tensor:
+        if target is None:
+            raise ValueError("FirstBreakHUNetLoss requires `target`.")
+        if isinstance(pred, (tuple, list)):
+            fused, sides = pred
+            loss = self._bce_dice(
+                fused, target, self.bce_weight, self.dice_weight,
+                self.smooth, self.pos_weight,
+            )
+            for s in sides:
+                loss = loss + self.side_weight * self._bce_dice(
+                    s, target, self.bce_weight, self.dice_weight,
+                    self.smooth, self.pos_weight,
+                )
+            return loss
+        return self._bce_dice(
+            pred, target, self.bce_weight, self.dice_weight,
+            self.smooth, self.pos_weight,
+        )
+
+
 def build_loss(cfg: Dict[str, Any]) -> BaseLoss:
     """Instantiate a loss from a ``{type, params}`` config block."""
     name = cfg["type"]
