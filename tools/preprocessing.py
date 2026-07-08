@@ -462,3 +462,31 @@ def inverse_spherical_divergence_correction(
     t = np.maximum(t, dt)
     gain = t ** power
     return _restore(x / gain, was_2d)
+
+
+def first_pick_from_mask(
+    mask: np.ndarray,
+    threshold: float = 0.5,
+    valid_mask: Optional[np.ndarray] = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Extract first-arrival sample indices from a binary probability mask.
+
+    Parameters
+    ----------
+    mask       : 2D numpy array of shape ``(traces, time)`` with values in [0, 1].
+    threshold  : probability threshold applied to binarise the mask.
+    valid_mask : optional boolean array same shape as ``mask``; where ``False``,
+                 the pick is forced to be invalid regardless of the mask value.
+
+    Returns
+    -------
+    pick : ``(traces,)`` float32 array; the time index of the first ``True``
+           pixel per trace (0 when no pick).
+    valid : ``(traces,)`` bool array; whether any pick was found.
+    """
+    binary = np.asarray(mask) > float(threshold)
+    if valid_mask is not None:
+        binary = binary & np.asarray(valid_mask)
+    valid = binary.any(axis=1)
+    pick = np.argmax(binary, axis=1)
+    return pick.astype(np.float32), valid
