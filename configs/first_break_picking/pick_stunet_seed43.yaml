@@ -1,0 +1,123 @@
+# First-break picking as binary step-mask segmentation.
+# STUNet uses a Swin Transformer encoder with U-shaped skip decoding.
+
+experiment:
+  name: first_break_pick_stunet_geomseg_seed43
+  output_dir: /output_dir
+  seed: 43
+  device: cuda:0
+
+data:
+  root: /data_root
+  data_dir: data
+  label_dir: label
+  files: null
+  label_threshold: 0.5
+  prediction_threshold: 0.5
+  validate_labels: true
+  label_check_traces: 2048
+  max_patches_per_split: null
+
+  gather_segment:
+    enabled: true
+    line_id_header: INLINE_3D
+    infer_line_from_geometry: true
+    distance_floor: 1000.0
+    median_multiplier: 5.0
+
+  split:
+    train: 0.8
+    val: 0.1
+    test: 0.1
+    shuffle_ffids: true
+
+  patch:
+    trace: 128
+    time: 512
+    trace_stride: 64
+    time_stride: 256
+
+  loader:
+    batch_size: 64
+    num_workers: 4
+    pin_memory: true
+
+preprocess:
+  normalize_mode: max_abs
+  normalize_scope: gather
+  clip_percentile: 99.5
+  normalize_eps: 1.0e-6
+
+model:
+  type: stunet
+  params:
+    in_channels: 1
+    out_channels: 1
+    embed_dim: 96
+    patch_size: 4
+    depths: [2, 2, 6, 2]
+    num_heads: [3, 6, 12, 24]
+    window_size: 7
+    mlp_ratio: 4.0
+    drop_path_rate: 0.0
+    dilations: [1, 2, 4, 8]
+
+loss:
+  type: bce_dice
+  params:
+    bce_weight: 0.5
+    dice_weight: 0.5
+    smooth: 1.0
+    pos_weight: null
+
+metrics:
+  - name: dice
+    params: { threshold: 0.5 }
+  - name: iou
+    params: { threshold: 0.5 }
+  - name: f1
+    params: { threshold: 0.5 }
+  - name: HitRate1px
+    params: { threshold: 0.5 }
+  - name: HitRate3px
+    params: { threshold: 0.5 }
+  - name: HitRate5px
+    params: { threshold: 0.5 }
+  - name: HitRate7px
+    params: { threshold: 0.5 }
+  - name: HitRate9px
+    params: { threshold: 0.5 }
+  - name: MeanAbsoluteError
+    params: { threshold: 0.5 }
+  - name: RootMeanSquaredError
+    params: { threshold: 0.5 }
+  - name: MeanBiasError
+    params: { threshold: 0.5 }
+  - name: GatherCoverage
+    params: { threshold: 0.5 }
+
+optim:
+  type: adamw
+  params:
+    lr: 1.0e-4
+    weight_decay: 1.0e-5
+
+scheduler:
+  type: cosine
+  params:
+    min_lr: 1.0e-6
+
+train:
+  epochs: 20
+  grad_clip: 1.0
+  progress_bar: true
+  log_step: false
+  log_interval: 20
+  eval_interval: 1
+  ckpt_interval: 1
+  vis_interval: 1
+  resume: null
+
+log:
+  log_dir: logs
+  plot_interval: 1

@@ -11,6 +11,7 @@ from . import dncnn_seg  # noqa: F401
 from . import res_unet  # noqa: F401
 from . import unet  # noqa: F401
 from . import hunet  # noqa: F401
+from . import stunet  # noqa: F401
 
 __all__ = [
     "MODEL_REGISTRY",
