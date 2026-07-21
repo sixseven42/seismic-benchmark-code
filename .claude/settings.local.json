@@ -2,7 +2,36 @@
   "permissions": {
     "allow": [
       "Bash(git init *)",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(python3 -c \"import PyPDF2; print\\('PyPDF2 found'\\)\")",
+      "Bash(python3 -c \"import pymupdf; print\\('pymupdf found'\\)\")",
+      "Bash(python3 -c \"import fitz; print\\('fitz found'\\)\")",
+      "Bash(pdftotext \"/home/gaotianxiang/code/seismic-benchmark-code/model/ground_roll_attenuation/reproduction/Ground-Roll_Attenuation_Using_a_Dual-Filter-Bank_Convolutional_Neural_Network.pdf\" /tmp/dual_filter_bank.txt)",
+      "Read(//tmp/**)",
+      "Bash(pdftotext \"/home/gaotianxiang/code/seismic-benchmark-code/model/ground_roll_attenuation/reproduction/Near-Surface-Related_Nonstationary_Coherent_Noise_Suppression_Using_a_Physically_Constrained_Deep_Neural_Network.pdf\" /tmp/physics_constrained.txt)",
+      "Bash(python3 *)",
+      "Bash(git commit -m 'fix: correct output init, train/eval consistency for dfb_cnn and physics_dnn *)",
+      "Bash(git push *)",
+      "Bash(git commit -m 'feat: add multiples attenuation models and update ground-roll launchers *)",
+      "Bash(git rm *)",
+      "Bash(git commit *)",
+      "Bash(git fetch *)",
+      "Bash(git checkout *)",
+      "Bash(awk '{sum+=$7} END {print sum/1024/1024/1024 \" GB held by deleted-but-open files\"}')",
+      "Bash(sync)",
+      "Bash(curl -s \"https://huggingface.co/api/models/GeoBrain/ground-roll-attenuation/tree/main\")",
+      "Bash(curl -s \"https://huggingface.co/api/models/GeoBrain/ground-roll-attenuation/tree/main/models\")",
+      "Bash(curl -s \"https://huggingface.co/api/models/GeoBrain/ground-roll-attenuation/tree/main/models/physics\")",
+      "Bash(curl -s \"https://huggingface.co/api/models/GeoBrain/ground-roll-attenuation/tree/main/models/physics/level1.0_seed42\")",
+      "Bash(awk '{print $5, $NF}')",
+      "Bash(sed -n '/^data:/,/^preprocess:/p' /data/shared/benchmark/ground_roll/results/denoise_enhanced_atten_unet_base0511_level1.0_seed42/config.yaml)",
+      "Bash(sed -n '/^data:/,/^preprocess:/p' /data/shared/benchmark/ground_roll/results/denoise_sanet_base0511_level1.0_seed42/config.yaml)",
+      "Bash(conda run *)",
+      "Read(//home/gaotianxiang/miniconda3/**)",
+      "Read(//home/gaotianxiang/anaconda3/**)",
+      "Bash(grep -n \"parser.add_argument.$\" scripts/random_noise_suppression/inference_denoise_unet.py)",
+      "Bash(grep -n 'vmax=vmax,$' scripts/random_noise_suppression/inference_denoise_unet.py)",
+      "Bash(git stash *)"
     ]
   }
 }
