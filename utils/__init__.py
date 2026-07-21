@@ -17,6 +17,13 @@ from .datasets import (
 )
 from .logger import StepLossLogger, TrainingLogger
 from .losses import LOSS_REGISTRY, BaseLoss, build_loss, register_loss
+from .eb_wse_metrics import energy_binned_weak_signal_metrics
+from .fb_fre_metrics import (
+    build_auto_bands,
+    compute_average_amplitude_spectrum,
+    estimate_effective_band,
+    frequency_binned_fidelity_metrics,
+)
 from .metrics import (
     BAD_FIRST_BREAK_PICK_INDEX,
     METRIC_REGISTRY,
@@ -94,6 +101,13 @@ __all__ = [
     "build_metrics",
     "compute_metrics",
     "register_metric",
+    # energy-binned metrics
+    "energy_binned_weak_signal_metrics",
+    # frequency-binned metrics
+    "compute_average_amplitude_spectrum",
+    "estimate_effective_band",
+    "build_auto_bands",
+    "frequency_binned_fidelity_metrics",
     # visualization
     "plot_loss_curve",
     "plot_step_loss_curve",

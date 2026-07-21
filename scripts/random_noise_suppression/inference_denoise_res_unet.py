@@ -139,6 +139,19 @@ def parse_args() -> argparse.Namespace:
         help="Number of random shots to visualize. Overrides config inference.n_viz_shots.",
     )
     parser.add_argument(
+        "--save-viz-npy",
+        dest="save_viz_npy",
+        action="store_true",
+        default=True,
+        help="Save per-shot visualization arrays as .npy files (default: True).",
+    )
+    parser.add_argument(
+        "--no-save-viz-npy",
+        dest="save_viz_npy",
+        action="store_false",
+        help="Disable saving per-shot visualization arrays as .npy files.",
+    )
+    parser.add_argument(
         "--seed",
         type=int,
         default=None,
@@ -407,6 +420,7 @@ def main() -> None:
         title_prefix=f"denoise_{model_type}_{noise_kind}_snr{snr_db:g}",
         vmin=-vmax,
         vmax=vmax,
+        save_npy=args.save_viz_npy,
     )
 
     print(f"Inference complete. Outputs saved to: {out_dir}")

@@ -569,3 +569,33 @@
 - Impact: Physics-Constrained DNN is available as `type: physics_dnn`, usable with the existing denoise training pipeline without changes to `utils/`, `tools/`, or other scripts. The physical constraints (frequency mask, Hilbert scaling) and SDPAF are implemented inside the model's forward pass. The model is lightweight (~37K params for default config, vs ~1.87M for DFB-CNN).
 - Follow-up: If full-shot SDPAF preprocessing is preferred (instead of per-patch in-model), move SDPAF into `_preprocess_shots`. The current in-model implementation keeps the preprocessing pipeline unchanged.
 - Reference: Liu et al., "Near-Surface-Related Nonstationary Coherent Noise Suppression Using a Physically Constrained Deep Neural Network," IEEE TGRS, vol. 63, 2025, 5903010.
+
+## 2026-07-17 - DDPM support in ground-roll batch evaluation
+
+- Context: `scripts/ground_roll_attenuation/batch_evaluate.py` failed on `ddpm` checkpoints with `TypeError: DDPMUNet.forward() missing 1 required positional argument: 't'` — the generic `inference_on_shots` calls `model(batch)`, but the conditional DDPM requires the reverse-diffusion sampling loop (`DDPMNoiseScheduler.sample_full`).
+- Change:
+  - `utils/inference_utils.py`: `inference_on_shots` gained an optional `forward_fn` argument that replaces the default `model(batch)` call. Backward compatible with all existing callers.
+  - `scripts/ground_roll_attenuation/batch_evaluate.py`: `load_model_from_checkpoint` now also returns the training config from `ckpt["extras"]["config"]` (avoids re-loading the checkpoint); `evaluate_one` detects `model.type == "ddpm_unet"`, rebuilds `DDPMNoiseScheduler` from the checkpoint's `diffusion` config, and runs DDIM sampling via `forward_fn` using the training-time validation settings (`train.eval_sample_steps` default 20, `eval_use_ddim`, `eval_ddim_eta`). The callable returns `input - x_0_pred` as "predicted noise" so the downstream `denoised = input - pred_noise` equals the sampled `x_0_pred`, matching `_evaluate_ddpm` in `train_denoise_ddpm.py`. `torch.manual_seed(0)` fixes the initial noise draw for reproducibility.
+  - Also renamed model key `physics_unet` -> `physics` in `MODEL_DISPLAY` / `MODEL_ROW_ORDER` to match on-disk experiment directory names (`denoise_physics_base0526_*`); display name stays "Physics CNN".
+- Impact: `--models ddpm` and `--models physics` now work in ground-roll batch evaluation. DDPM evaluation is ~20x slower than single-forward models (20 UNet forwards per batch). The multiples pipeline and other `inference_on_shots` callers are unaffected.
+
+## 2026-07-17 - Fix physics_unet and enhanced_atten_unet in ground-roll batch evaluation
+
+- Context: two model families produced broken batch-evaluation results.
+  1. `physics_unet` (`PhysicsSeparationNet`) crashed in `inference_on_shots`: its `forward()` returns the `(X, Y, Y_recover)` tuple used by the physics constraints, so `out.cpu()` raised `AttributeError`. The dedicated `denoise()` method (clean-signal estimate X, same as training-time validation in the reference `train_denoise_physics.py`) must be used instead.
+  2. `enhanced_atten_unet` base0511 checkpoints were trained before commit 6de141a ("align Enhanced Attention UNet to predict noise residual"): the model outputs the denoised signal and `test_set/target_shots.npy` stores the clean signal (verified numerically: enhanced target equals `input - noise_target` of sanet's test set exactly). The noise-convention assumptions in `evaluate_one` made both `clean_ref` and `denoised` wrong.
+- Change (`scripts/ground_roll_attenuation/batch_evaluate.py`):
+  - New `SIGNAL_CONVENTION_MODELS = {"enhanced_atten_unet"}` constant marking signal-prediction-convention checkpoints. Remove the entry if the model is retrained with the aligned noise-residual script.
+  - `evaluate_one` now dispatches model-specific inference adapters on `model.type` from the checkpoint config: `ddpm_unet` (DDIM sampling, unchanged), `physics_unet` (`batch - model.denoise(batch)`), and signal-convention models (`batch - model(batch)`). Every adapter returns predicted noise so `denoised = input - pred_noise` holds uniformly.
+  - `clean_ref` is `target_shots` directly for signal-convention models, `input - target` otherwise.
+- Impact: physics and enhanced_atten_unet can now be evaluated correctly. Note: existing Excel files contain wrong Enhanced Atten-UNet rows; `--merge` skips already-present entries, so delete those rows (or re-run without merge) before re-evaluating.
+
+## 2026-07-20 - Pool ground-roll binned metrics over the full test volume
+
+- Context: Ground-roll batch evaluation computed global SNR after reshaping the full test volume to one sample, while EB-WSE and FB-FRE averaged per-panel scores. The inconsistent reductions could reverse model rankings.
+- Change:
+  - `utils/inference_utils.py`: added `compute_pooled_binned_metrics`, which validates 3D inputs, preserves the time axis, reshapes shot and trace axes to `(1, -1, n_time)`, and delegates to the existing `compute_binned_metrics` without changing its behavior for other callers.
+  - `scripts/ground_roll_attenuation/batch_evaluate.py`: switched EB-WSE and FB-FRE evaluation to the pooled helper.
+  - `test/test_inference_utils.py`: added regression coverage for pooled EB-WSE/FB-FRE values, explicit-reshape equivalence, and pre-reshape shape validation.
+- Impact: Ground-roll global, amplitude-binned, and frequency-binned metrics now use the same whole-volume reduction within each seed. Mean and standard deviation across independent seeds remain unchanged. Multiples attenuation keeps the existing per-panel behavior.
+- Follow-up: Recompute all compared ground-roll models into a new workbook so pooled and legacy binned values are not mixed.

@@ -62,7 +62,13 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from model.multiples_attenuation import build_model  # noqa: E402
-from utils.inference_utils import compute_shot_metrics, inference_on_shots  # noqa: E402
+from utils.inference_utils import (  # noqa: E402
+    compute_binned_metrics,
+    compute_shot_metrics,
+    inference_on_shots,
+    save_shot_visualizations,
+    select_random_shots,
+)
 
 # ---------------------------------------------------------------------------
 # constants
@@ -123,6 +129,27 @@ def parse_dir_name(name: str) -> Optional[Tuple[str, str, str]]:
     return None
 
 
+def _parse_noise_level_from_dir(result_dir: Path) -> str:
+    """Extract data level from a result directory name."""
+    parsed = parse_dir_name(result_dir.name)
+    if parsed is not None:
+        return parsed[1]
+    m = _DIR_RE_SIMPLE.match(result_dir.name)
+    if m is not None:
+        config_path = result_dir / "config.yaml"
+        if config_path.is_file():
+            try:
+                with open(config_path, "r") as f:
+                    cfg = yaml.safe_load(f)
+                input_path = cfg.get("data", {}).get("segy_pair", {}).get("input_path", "")
+                lm = _NOISE_LEVEL_RE.search(input_path)
+                if lm:
+                    return lm.group(1)
+            except Exception:
+                pass
+    return "unknown"
+
+
 def _level_sort_key(level: str) -> Tuple[int, float | str]:
     """Sort numeric noise levels first and fixed-dataset labels last."""
     try:
@@ -136,6 +163,66 @@ def _sheet_title(level: str) -> str:
     if level == "single":
         return "Multiples"
     return f"Noise {level}"
+
+
+def _save_viz_and_npy(
+    eval_dir: Path,
+    input_shots: np.ndarray,
+    clean_shots: np.ndarray,
+    denoised_shots: np.ndarray,
+    model_type: str,
+    data_level: str,
+    n_viz_shots: int = 5,
+) -> None:
+    """Save full-volume .npy files and per-shot visualizations to ``eval_dir``.
+
+    Directory layout (aligned with ``inference_denoise_*.py``)::
+
+        eval_dir/
+        ├── npy/
+        │   ├── input_shots.npy
+        │   ├── target_shots.npy
+        │   └── pred_shots.npy
+        └── visualizations/
+            ├── denoise_{model}_level{level}_shot_0000.png
+            ├── …
+            └── data/
+                ├── denoise_{model}_level{level}_shot_0000_input.npy
+                ├── denoise_{model}_level{level}_shot_0000_prediction.npy
+                ├── denoise_{model}_level{level}_shot_0000_target.npy
+                └── …
+    """
+    eval_dir.mkdir(parents=True, exist_ok=True)
+
+    # --- full-volume .npy files ---
+    npy_dir = eval_dir / "npy"
+    npy_dir.mkdir(parents=True, exist_ok=True)
+    np.save(npy_dir / "input_shots.npy", input_shots)
+    np.save(npy_dir / "target_shots.npy", clean_shots)
+    np.save(npy_dir / "pred_shots.npy", denoised_shots)
+
+    # --- per-shot visualizations ---
+    viz_dir = eval_dir / "visualizations"
+    viz_dir.mkdir(parents=True, exist_ok=True)
+    n_shots = input_shots.shape[0]
+    indices = select_random_shots(n_shots, n_viz_shots, seed=42)
+    vmax = float(np.quantile(np.abs(np.concatenate([
+        input_shots.ravel(), denoised_shots.ravel(), clean_shots.ravel()
+    ])), 0.995))
+
+    level_tag = data_level.replace(".", "_")
+    title_prefix = f"denoise_{model_type}_level{level_tag}"
+    save_shot_visualizations(
+        input_shots=input_shots,
+        pred_shots=denoised_shots,
+        target_shots=clean_shots,
+        indices=indices,
+        save_dir=viz_dir,
+        title_prefix=title_prefix,
+        vmin=-vmax,
+        vmax=vmax,
+        save_npy=True,
+    )
 
 
 def discover_results(root: Path) -> List[Dict[str, Any]]:
@@ -192,6 +279,48 @@ def discover_results(root: Path) -> List[Dict[str, Any]]:
     return entries
 
 
+def _read_config_norm_mode(result_dir: Path) -> Tuple[str, float, float]:
+    """Read normalization settings from experiment config.
+
+    Returns ``(normalize_mode, psnr_peak, ssim_data_range)``.
+    For ``max_abs`` data: peak=1.0, range=2.0.
+    For ``mean_std`` data: peak/range estimated from actual clean signal.
+    """
+    config_path = result_dir / "config.yaml"
+    normalize_mode = "max_abs"
+    if config_path.is_file():
+        try:
+            with open(config_path, "r") as f:
+                cfg = yaml.safe_load(f)
+            normalize_mode = str(
+                cfg.get("preprocess", {}).get("normalize_mode", "max_abs")
+            )
+        except Exception:
+            pass
+    if normalize_mode == "mean_std":
+        # Actual peak/range will be estimated from the test data later
+        return normalize_mode, -1.0, -1.0
+    return normalize_mode, 1.0, 2.0
+
+
+def _read_config_dt(result_dir: Path) -> float:
+    """Read ``dt`` from the experiment config.yaml, defaulting to 0.002 s."""
+    config_path = result_dir / "config.yaml"
+    if config_path.is_file():
+        try:
+            with open(config_path, "r") as f:
+                cfg = yaml.safe_load(f)
+            time_downsample = int(
+                cfg.get("data", {})
+                .get("segy_pair", {})
+                .get("time_downsample", 1)
+            )
+            return 0.002 * time_downsample
+        except Exception:
+            pass
+    return 0.002
+
+
 def load_model_from_checkpoint(ckpt_path: Path, device: torch.device) -> torch.nn.Module:
     """Load a model from a training checkpoint."""
     ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
@@ -209,6 +338,8 @@ def evaluate_one(
     patch_size: Tuple[int, int] = (128, 256),
     overlap: float = 0.5,
     batch_size: int = 8,
+    n_viz_shots: int = 5,
+    save_viz: bool = True,
 ) -> Optional[Dict[str, Any]]:
     """Run inference + metric computation for a single experiment directory.
 
@@ -222,6 +353,16 @@ def evaluate_one(
         model = load_model_from_checkpoint(ckpt_path, device)
         total_params = sum(p.numel() for p in model.parameters())
         num_params_m = total_params / 1e6
+        # read model type for visualization prefix
+        config_path = result_dir / "config.yaml"
+        model_type = "unknown"
+        if config_path.is_file():
+            try:
+                with open(config_path, "r") as f:
+                    _cfg = yaml.safe_load(f)
+                model_type = str(_cfg.get("model", {}).get("type", "unknown"))
+            except Exception:
+                pass
     except Exception:
         print(f"[ERROR] failed to load model from {ckpt_path}:")
         traceback.print_exc()
@@ -255,25 +396,60 @@ def evaluate_one(
     clean_ref = input_shots - target_shots          # ground-truth clean
     denoised = input_shots - pred_noise             # model output
 
+    # --- save full-volume npy and per-shot visualizations ---------------------
+    if save_viz:
+        eval_dir = result_dir / "evaluation"
+        try:
+            noise_level = _parse_noise_level_from_dir(result_dir)
+            _save_viz_and_npy(
+                eval_dir,
+                input_shots,
+                clean_ref,
+                denoised,
+                model_type=model_type,
+                data_level=noise_level,
+                n_viz_shots=n_viz_shots,
+            )
+        except Exception:
+            print(f"[WARN] visualization saving failed for {result_dir.name}:")
+            traceback.print_exc()
+
+    # --- binned metrics (EB-WSE / FB-FRE) on 3D data before flattening ---------
+    dt = float(_read_config_dt(result_dir))
+    binned_after: Dict[str, Any] = {}
+    try:
+        binned_after = compute_binned_metrics(denoised, clean_ref, dt=dt)
+    except Exception:
+        print(f"[WARN] binned metrics failed for {result_dir.name}:")
+        traceback.print_exc()
+
     # --- flatten to 2D: (n_shots × n_traces, n_time) ------------------------
     n_time = input_shots.shape[-1]
     noisy_2d = input_shots.reshape(-1, n_time)
     clean_2d = clean_ref.reshape(-1, n_time)
     denoised_2d = denoised.reshape(-1, n_time)
 
+    # --- read normalization mode for correct PSNR/SSIM data ranges -----------
+    norm_mode, psnr_peak, ssim_range = _read_config_norm_mode(result_dir)
+    if psnr_peak < 0:
+        # mean_std: estimate peak from the actual clean signal
+        psnr_peak = float(np.quantile(np.abs(clean_ref), 0.999))
+        ssim_range = psnr_peak * 2.0
+
     # --- metrics (reshape 2D → 3D for compute_shot_metrics) -----------------
     _, before_mean = compute_shot_metrics(
         noisy_2d.reshape(1, -1, n_time), clean_2d.reshape(1, -1, n_time),
-        METRIC_NAMES,
+        METRIC_NAMES, psnr_peak=psnr_peak, ssim_data_range=ssim_range,
     )
     _, after_mean = compute_shot_metrics(
         denoised_2d.reshape(1, -1, n_time), clean_2d.reshape(1, -1, n_time),
-        METRIC_NAMES,
+        METRIC_NAMES, psnr_peak=psnr_peak, ssim_data_range=ssim_range,
     )
 
     return {
         "before": before_mean,
         "after": after_mean,
+        "after_binned": binned_after,
         "num_params_m": num_params_m,
     }
 
@@ -307,6 +483,14 @@ def aggregate(
         if n_params is not None and model not in params_by_model:
             params_by_model[model] = n_params
 
+    # discover all binned metric keys present in the results
+    binned_keys: set = set()
+    for entry in entries:
+        ab = entry.get("after_binned", {})
+        if ab:
+            binned_keys.update(ab.keys())
+    binned_keys_sorted = sorted(binned_keys)
+
     # compute mean±std
     aggregated: Dict[str, Dict[str, Any]] = {}
     for level in sorted(groups.keys(), key=_level_sort_key):
@@ -331,7 +515,45 @@ def aggregate(
                 model_stats[m] = (mean, std)
             aggregated[level][model] = model_stats
 
-    return aggregated, params_by_model
+    # aggregate binned metrics separately: level → model → binned_stats
+    binned_groups: Dict[str, Dict[str, List[Dict[str, Any]]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
+    for entry in entries:
+        ab = entry.get("after_binned", {})
+        if ab:
+            binned_groups[entry["level"]][entry["model"]].append(ab)
+
+    binned_aggregated: Dict[str, Dict[str, Dict[str, Tuple[float, float]]]] = {}
+    for level in sorted(binned_groups.keys(), key=_level_sort_key):
+        binned_aggregated[level] = {}
+        for model in MODEL_ROW_ORDER:
+            seeds = binned_groups[level].get(model, [])
+            if not seeds:
+                continue
+            model_stats: Dict[str, Tuple[float, float]] = {}
+            for k in binned_keys_sorted:
+                vals = []
+                for s in seeds:
+                    v = s.get(k)
+                    if v is None:
+                        continue
+                    if not np.isscalar(v):
+                        continue
+                    if np.isfinite(v):
+                        vals.append(v)
+                if len(vals) == 0:
+                    continue
+                mean = float(np.mean(vals))
+                if len(vals) >= 2:
+                    std = float(np.std(vals, ddof=1))
+                else:
+                    std = 0.0
+                model_stats[k] = (mean, std)
+            if model_stats:
+                binned_aggregated[level][model] = model_stats
+
+    return aggregated, params_by_model, binned_keys_sorted, binned_aggregated
 
 
 def _fmt(mean: float, std: float, metric: str) -> str:
@@ -380,6 +602,7 @@ def load_existing_results(
 
     wb = openpyxl.load_workbook(str(xlsx_path), read_only=True, data_only=True)
     aggregated: Dict[str, Dict[str, Any]] = {}
+    binned_agg: Dict[str, Dict[str, Any]] = {}
     params_by_model: Dict[str, float] = {}
 
     for sheet_name in wb.sheetnames:
@@ -409,11 +632,12 @@ def load_existing_results(
                 except ValueError:
                     pass
 
-            # parse metrics from columns onward
+            # parse metrics from columns onward (standard + binned)
             metrics: Dict[str, Any] = {}
             for ci in range(2, len(headers)):
                 metric_name = headers[ci]
-                if metric_name not in METRIC_NAMES:
+                is_binned = metric_name.startswith("eb_wse_") or metric_name.startswith("fb_fre_")
+                if metric_name not in METRIC_NAMES and not is_binned:
                     continue
                 cell_val = row[ci] if ci < len(row) else None
                 if cell_val is None or str(cell_val).strip() in ("—", ""):
@@ -430,21 +654,33 @@ def load_existing_results(
                         metrics[metric_name] = parsed
 
             if metrics:
-                level_data[model_key] = metrics
+                # split standard vs binned metrics
+                std_metrics = {k: v for k, v in metrics.items() if not k.startswith(("eb_wse_", "fb_fre_"))}
+                bin_metrics = {k: v for k, v in metrics.items() if k.startswith(("eb_wse_", "fb_fre_"))}
+                if std_metrics:
+                    level_data.setdefault(model_key, {}).update(std_metrics)
+                if bin_metrics:
+                    binned_agg.setdefault(level, {}).setdefault(model_key, {}).update(bin_metrics)
 
         if level_data:
             aggregated[level] = level_data
+        if level in binned_agg:
+            if level not in binned_agg:
+                binned_agg[level] = {}
+            binned_agg[level].update(binned_agg.get(level, {}))
 
     wb.close()
-    return aggregated, params_by_model
+    return aggregated, params_by_model, binned_agg
 
 
 def build_excel(
     aggregated: Dict[str, Dict[str, Any]],
     params_by_model: Dict[str, float],
     output_path: Path,
+    binned_keys: Optional[list] = None,
+    binned_aggregated: Optional[Dict[str, Dict[str, Dict[str, Tuple[float, float]]]]] = None,
 ) -> None:
-    """Write one sheet per data level. Rows = methods, columns = metrics."""
+    """Write one sheet per data level. Rows = methods, columns = metrics + binned."""
     try:
         import openpyxl
         from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
@@ -493,7 +729,18 @@ def build_excel(
             cell.alignment = center_align
             cell.border = thin_border
 
+        # --- binned metric columns (EB-WSE / FB-FRE) -------------------------
+        binned_col_start = 3 + len(METRIC_DISPLAY)
+        _binned_keys: list = binned_keys or []
+        for bi, bk in enumerate(_binned_keys):
+            cell = ws.cell(row=1, column=binned_col_start + bi, value=bk.upper())
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = center_align
+            cell.border = thin_border
+
         level_data = aggregated[level]
+        level_binned = (binned_aggregated or {}).get(level, {})
 
         # row order: raw, then each model in MODEL_ROW_ORDER
         row_order = ["raw"] + [m for m in MODEL_ROW_ORDER if m in level_data]
@@ -528,9 +775,22 @@ def build_excel(
                 cell.alignment = center_align
                 cell.border = thin_border
 
+            # --- binned metric cells ---
+            binned_data = level_binned.get(key, {}) if key != "raw" else {}
+            for bi, bk in enumerate(_binned_keys):
+                bd = binned_data.get(bk)
+                if bd is not None:
+                    val = _fmt(bd[0], bd[1], bk)
+                else:
+                    val = "—"
+                cell = ws.cell(row=ri, column=binned_col_start + bi, value=val)
+                cell.alignment = center_align
+                cell.border = thin_border
+
         # auto-width
         from openpyxl.utils import get_column_letter
-        for ci in range(1, n_metric_cols + 3):
+        total_cols = binned_col_start + len(_binned_keys)
+        for ci in range(1, total_cols):
             max_w = 0
             for row in ws.iter_rows(min_col=ci, max_col=ci):
                 for c in row:
@@ -567,6 +827,25 @@ def main() -> None:
     parser.add_argument(
         "--batch_size", type=int, default=8,
         help="Batch size for inference (default: 8)",
+    )
+    parser.add_argument(
+        "--n-viz-shots",
+        type=int,
+        default=5,
+        help="Number of random shots to visualize per experiment (default: 5).",
+    )
+    parser.add_argument(
+        "--save-viz",
+        dest="save_viz",
+        action="store_true",
+        default=True,
+        help="Save full-volume .npy files and per-shot visualizations (default: True).",
+    )
+    parser.add_argument(
+        "--no-save-viz",
+        dest="save_viz",
+        action="store_false",
+        help="Disable saving .npy files and per-shot visualizations.",
     )
     parser.add_argument(
         "--models", nargs="+",
@@ -609,20 +888,31 @@ def main() -> None:
 
     # --- merge mode: skip already-evaluated (data-level, model) pairs -----------
     old_aggregated: Dict[str, Dict[str, Any]] = {}
+    old_binned: Dict[str, Dict[str, Any]] = {}
     old_params: Dict[str, float] = {}
     if args.merge and args.output.is_file():
         print(f"Merge mode: loading existing results from {args.output}")
-        old_aggregated, old_params = load_existing_results(args.output)
+        old_aggregated, old_params, old_binned = load_existing_results(args.output)
+        # Check whether old Excel already has binned columns
+        _old_has_binned = any(
+            any(k.startswith("eb_wse_") or k.startswith("fb_fre_") for k in stats)
+            for models in old_aggregated.values()
+            for stats in models.values()
+        )
         # build set of (data-level, model) already in the existing Excel
         already_done: set = set()
         for level, models in old_aggregated.items():
             for model in models:
-                already_done.add((level, model))
+                # Only skip if old Excel already has binned metrics for this model;
+                # otherwise re-evaluate to fill in missing binned columns.
+                if _old_has_binned:
+                    already_done.add((level, model))
         n_before = len(entries)
-        entries = [
-            e for e in entries
-            if (e["level"], e["model"]) not in already_done
-        ]
+        if _old_has_binned:
+            entries = [
+                e for e in entries
+                if (e["level"], e["model"]) not in already_done
+            ]
         skipped = n_before - len(entries)
         if skipped:
             skipped_names = sorted(
@@ -632,7 +922,7 @@ def main() -> None:
             )
             print(f"Skipping {skipped} already-evaluated entry(s) for: "
                   f"{', '.join(MODEL_DISPLAY.get(m, m) for m in skipped_names)}")
-        if not entries:
+        if not entries and _old_has_binned:
             print("All requested models already evaluated — nothing to do.")
             sys.exit(0)
 
@@ -647,6 +937,8 @@ def main() -> None:
             d,
             device=device,
             batch_size=args.batch_size,
+            n_viz_shots=args.n_viz_shots,
+            save_viz=args.save_viz,
         )
         if result is None:
             print(f"  -> FAILED, skipping")
@@ -655,6 +947,7 @@ def main() -> None:
         else:
             entry["before"] = result["before"]
             entry["after"] = result["after"]
+            entry["after_binned"] = result.get("after_binned", {})
             entry["num_params_m"] = result["num_params_m"]
             b = result["before"]
             a = result["after"]
@@ -665,9 +958,16 @@ def main() -> None:
                 f"SSIM: {b['ssim']:.4f} -> {a['ssim']:.4f}  |  "
                 f"MSE:  {b['mse']:.6f} -> {a['mse']:.6f}"
             )
+            # Print binned metric summary
+            ab = result.get("after_binned", {})
+            if ab:
+                snr_items = {k: v for k, v in ab.items() if "snr" in k}
+                if snr_items:
+                    parts = [f"{k}={v:.2f}" if v is not None else f"{k}=N/A" for k, v in sorted(snr_items.items())]
+                    print(f"  Binned SNR: {', '.join(parts)}")
 
     # --- aggregate per level -------------------------------------------------
-    aggregated, params_by_model = aggregate(entries)
+    aggregated, params_by_model, binned_keys_sorted, binned_aggregated = aggregate(entries)
 
     # --- merge with old results if requested ----------------------------------
     if old_aggregated:
@@ -682,6 +982,20 @@ def main() -> None:
                 params_by_model[model] = n_m
         # re-sort data levels
         aggregated = {k: aggregated[k] for k in sorted(aggregated.keys(), key=_level_sort_key)}
+    # merge old binned data
+    if old_binned:
+        for level, models in old_binned.items():
+            binned_aggregated.setdefault(level, {})
+            for model, stats in models.items():
+                if model not in binned_aggregated[level]:
+                    binned_aggregated[level][model] = stats
+        # discover binned keys from old data too
+        for models in old_binned.values():
+            for stats in models.values():
+                for k in stats:
+                    if k not in binned_keys_sorted:
+                        binned_keys_sorted.append(k)
+        binned_keys_sorted = sorted(binned_keys_sorted)
 
     # summary of what was aggregated
     print("Model parameter counts:")
@@ -694,7 +1008,8 @@ def main() -> None:
         print(f"{label}: raw + {len(models)} model(s) — {', '.join(MODEL_DISPLAY.get(m, m) for m in models)}")
 
     # --- export -------------------------------------------------------------
-    build_excel(aggregated, params_by_model, args.output)
+    build_excel(aggregated, params_by_model, args.output,
+                binned_keys=binned_keys_sorted, binned_aggregated=binned_aggregated)
 
 
 if __name__ == "__main__":
