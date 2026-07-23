@@ -18,6 +18,13 @@
 - Impact: EB-WSE inference now degrades gracefully to a uniform energy smoothing fallback instead of raising `ImportError` on systems without `scipy`. Results are slightly different from Gaussian smoothing but remain deterministic and numerically stable.
 - Follow-up: Consider adding a unit test that temporarily blocks `scipy.ndimage` imports to lock in this fallback behavior.
 
+## 2026-07-23 - Fix off-by-one bug in numpy-only uniform filter fallback
+- Context: User reported that `_uniform_filter_numpy` in `utils/eb_wse_metrics.py` produced an output one element shorter along each dimension when the scipy fallback was active, which then caused downstream index-out-of-bounds errors in EB-WSE.
+- Change:
+  - Corrected the sliding-window cumulative-sum logic in `_uniform_filter_numpy` by prepending a leading zero to the cumulative sum before computing differences. This preserves the input array shape on every axis.
+- Impact: EB-WSE works correctly on systems without `scipy`; the fallback energy map has the same shape as the input reference shot.
+- Follow-up: Add a shape-preservation unit test for `_uniform_filter_numpy`.
+
 ## 2026-07-20 - Change FB-FRE taper width to reduce Gibbs ringing
 - Context: Code review noted that `taper_width: 0.0` produces a rectangular FFT passband, causing Gibbs ringing in the time domain and leaking energy between adjacent frequency bands. After switching to a fixed `2.0` Hz taper, the user's narrow bands (e.g. `very_high` only 7 Hz wide) showed that a fixed Hz taper can consume too much of a narrow band's flat passband.
 - Change:

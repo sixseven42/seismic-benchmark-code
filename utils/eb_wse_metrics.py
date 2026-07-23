@@ -27,7 +27,12 @@ def _uniform_filter_numpy(arr: np.ndarray, size: int) -> np.ndarray:
         pad_width = [(0, 0)] * (arr.ndim - 1) + [(half, half)]
         padded = np.pad(moved, pad_width, mode="edge")
         cum = np.cumsum(padded, axis=-1)
-        filtered = (cum[..., size:] - cum[..., :-size]) / size
+        # Prepend zeros so sliding-window sums can be computed as differences.
+        leading_shape = cum.shape[:-1] + (1,)
+        cum_padded = np.concatenate(
+            [np.zeros(leading_shape, dtype=cum.dtype), cum], axis=-1
+        )
+        filtered = (cum_padded[..., size:] - cum_padded[..., :-size]) / size
         result = np.moveaxis(filtered, -1, axis)
     return result
 
