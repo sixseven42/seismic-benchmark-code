@@ -6,18 +6,18 @@
 set -euo pipefail
 
 # ---------- Configuration ----------
-CUDA_VISIBLE_DEVICES="3,4" # physical GPUs, comma-separated
-NPROC_PER_NODE=2         # must match the number of visible GPUs
+CUDA_VISIBLE_DEVICES="4,5,6,7" # physical GPUs, comma-separated
+NPROC_PER_NODE=4           # must match the number of visible GPUs
 N_SEEDS=3                  # number of seeds
 START_SEED=42              # first seed; subsequent seeds are START_SEED+1, START_SEED+2, ...
-MASTER_PORT=28500          # base port for torchrun; incremented per run to avoid EADDRINUSE
+MASTER_PORT=29501          # base port for torchrun; incremented per run to avoid EADDRINUSE
 TORCHRUN_EXTRA=""          # optional: extra flags for torchrun, e.g. "--standalone"
 # ------------------------------------
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-BASE_CONFIG="${REPO_ROOT}/configs/multiples_attenuation/denoise_unet.yaml"
-PY_SCRIPT="${REPO_ROOT}/scripts/multiples_attenuation/train_denoise_unet.py"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
+BASE_CONFIG="${REPO_ROOT}/configs/multiples_attenuation/denoise_res_unet.yaml"
+PY_SCRIPT="${REPO_ROOT}/scripts/multiples_attenuation/train/train_denoise_res_unet.py"
 
 export CUDA_VISIBLE_DEVICES
 

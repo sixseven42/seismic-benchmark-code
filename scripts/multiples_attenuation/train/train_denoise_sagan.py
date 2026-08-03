@@ -1,4 +1,4 @@
-"""Train Kiraz trace-by-trace CNN on paired multiples attenuation data."""
+"""Train the SAGAN U-Net generator on paired multiples attenuation data."""
 
 from __future__ import annotations
 
@@ -10,12 +10,12 @@ from utils import default_config_relpath_for_train_script
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Train Kiraz trace-by-trace 1D CNN for multiples attenuation."
+        description="Train SAGAN generator for multiples attenuation."
     )
     parser.add_argument(
         "--config",
         type=str,
-        default=default_config_relpath_for_train_script(__file__),
+        default="configs/multiples_attenuation/denoise_sagan.yaml",
         help="Path to denoise config (expects data.*_pair).",
     )
     return parser.parse_args()

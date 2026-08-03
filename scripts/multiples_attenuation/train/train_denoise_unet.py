@@ -1,7 +1,7 @@
 """SEG-Y denoising: paired volumes + supervised patch training (YAML model; multi-GPU via ``torchrun`` + DDP).
 
 CUDA_VISIBLE_DEVICES=6,7 torchrun --nproc_per_node=2 \
-    scripts/multiples_attenuation/train_denoise_unet.py \
+    scripts/multiples_attenuation/train/train_denoise_unet.py \
     --config configs/multiples_attenuation/denoise_unet.yaml
 """
 
@@ -174,7 +174,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--config",
         type=str,
-        default=default_config_relpath_for_train_script(__file__),
+        default="configs/multiples_attenuation/denoise_unet.yaml",
         help="Path to denoise config (expects data.*_pair).",
     )
     return parser.parse_args()

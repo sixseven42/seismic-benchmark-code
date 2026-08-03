@@ -11,9 +11,9 @@ MASTER_PORT=28640
 TORCHRUN_EXTRA=""
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 BASE_CONFIG="${REPO_ROOT}/configs/multiples_attenuation/denoise_dnndat.yaml"
-PY_SCRIPT="${REPO_ROOT}/scripts/multiples_attenuation/train_denoise_dnndat.py"
+PY_SCRIPT="${REPO_ROOT}/scripts/multiples_attenuation/train/train_denoise_dnndat.py"
 
 export CUDA_VISIBLE_DEVICES
 

@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
-# Run multiple seeds for the SAGAN generator reproduction.
+# Run multiple seeds for the Kiraz trace-by-trace CNN reproduction.
 
 set -euo pipefail
 
-CUDA_VISIBLE_DEVICES="0,1,2,3"
-NPROC_PER_NODE=4
+CUDA_VISIBLE_DEVICES="4,5"
+NPROC_PER_NODE=2
 N_SEEDS=3
 START_SEED=42
-MASTER_PORT=28620
+MASTER_PORT=28600
 TORCHRUN_EXTRA=""
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-BASE_CONFIG="${REPO_ROOT}/configs/multiples_attenuation/denoise_sagan.yaml"
-PY_SCRIPT="${REPO_ROOT}/scripts/multiples_attenuation/train_denoise_sagan.py"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
+BASE_CONFIG="${REPO_ROOT}/configs/multiples_attenuation/denoise_kiraz_trace_cnn.yaml"
+PY_SCRIPT="${REPO_ROOT}/scripts/multiples_attenuation/train/train_denoise_kiraz_trace_cnn.py"
 
 export CUDA_VISIBLE_DEVICES
 
