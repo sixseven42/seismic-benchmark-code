@@ -194,7 +194,22 @@ def pretrain_classifier(
             optim.step()
             total_loss += loss.item()
             n_batch += 1
-        acc = ((torch.sigmoid(classifier(_to_fk(all_data.to(device))).squeeze(-1)) > 0.5).float() == labels.to(device)).float().mean()
+        # Batched accuracy computation to avoid OOM
+        classifier.eval()
+        correct, total = 0, 0
+        with torch.no_grad():
+            for start in range(0, len(all_data), bs):
+                idx_b = torch.arange(start, min(start + bs, len(all_data)))
+                batch = all_data[idx_b].to(device)
+                lbl = labels[idx_b].to(device)
+                fk = _to_fk(batch)
+                out = classifier(fk).squeeze(-1)
+                pred = (torch.sigmoid(out) > 0.5).float()
+                correct += (pred == lbl).sum().item()
+                total += len(idx_b)
+        acc = correct / max(total, 1)
+        classifier.train()
+
         print(f"  Classifier epoch {epoch + 1}/{epochs}: loss={total_loss / max(n_batch, 1):.4f}, acc={acc:.4f}")
 
     save_path = exp_dir / "fk_classifier.pt"
@@ -205,6 +220,46 @@ def pretrain_classifier(
 def _build_triplet_patches(cfg: Dict[str, Any]) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     noisy, clean, gr, _ = _preprocess_shots(cfg)
     return _patchify_triplets(noisy, clean, gr, cfg)
+
+
+# ---------------------------------------------------------------------------
+# visualization
+# ---------------------------------------------------------------------------
+
+@torch.no_grad()
+def _visualize_physics_sample(
+    model: nn.Module,
+    loader: torch.utils.data.DataLoader,
+    save_path: Path,
+    device: torch.device,
+    title: Optional[str] = None,
+    seed: Optional[int] = None,
+) -> None:
+    """Pick a random sample from ``loader``, run denoise, save a 4-panel plot.
+
+    Panels: noisy input | denoised prediction | clean reference | residual.
+    """
+    dataset = loader.dataset
+    rng = np.random.default_rng(seed)
+    idx = int(rng.integers(0, len(dataset)))
+    sample = dataset[idx]
+    z, x_true, _ = sample
+    z = z.unsqueeze(0).to(device)
+    x_true = x_true.unsqueeze(0).to(device)
+
+    x_pred = model.denoise(z)
+
+    from utils import plot_sample
+    suffix = f"sample idx={idx}"
+    full_title = f"{title} | {suffix}" if title else suffix
+    plot_sample(
+        input_data=z,
+        prediction=x_pred,
+        target=x_true,
+        save_path=save_path,
+        title=full_title,
+        cmap="gray",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -251,22 +306,19 @@ def main() -> None:
         print(f"Loaded pre-trained f-k classifier from {clf_path}")
 
     # data loaders — custom build since we need triplets
-    noisy, clean, gr, _ = _preprocess_shots(cfg)
+    noisy, clean, gr, per_shot_ffid = _preprocess_shots(cfg)
+    loader_cfg = cfg["data"].get("loader", {})
+    bs = int(loader_cfg.get("batch_size", 16))
+    nw = int(loader_cfg.get("num_workers", 4))
+    pm = bool(loader_cfg.get("pin_memory", True))
+    seed = int(cfg["experiment"]["seed"])
 
     if "shot_split" in cfg.get("data", {}):
-        # manual shot split for triplets
         ss = cfg["data"]["shot_split"]
         n_train, n_val = int(ss["train"]), int(ss["val"])
-        # get FFIDs
-        if cfg["data"].get("segy_pair", {}).get("input_path", "").lower().endswith((".sgy", ".segy")):
-            from tools.segy_read import read_regular_shots
-            _, hdrs = read_regular_shots(cfg["data"]["segy_pair"]["input_path"], traces_per_shot=201, time_downsample=1, return_headers=True)
-            ffid = hdrs["FieldRecord"][:, 0]
-        else:
-            ffid = np.arange(noisy.shape[0])
-        unique = np.unique(ffid)
-        train_mask = np.isin(ffid, unique[:n_train])
-        val_mask = np.isin(ffid, unique[n_train:n_train + n_val])
+        unique = np.unique(per_shot_ffid)
+        train_mask = np.isin(per_shot_ffid, unique[:n_train])
+        val_mask = np.isin(per_shot_ffid, unique[n_train:n_train + n_val])
 
         train_n, train_c, train_g = _patchify_triplets(noisy[train_mask], clean[train_mask], gr[train_mask], cfg)
         val_n, val_c, val_g = _patchify_triplets(noisy[val_mask], clean[val_mask], gr[val_mask], cfg)
@@ -274,7 +326,7 @@ def main() -> None:
         noisy_p, clean_p, gr_p = _patchify_triplets(noisy, clean, gr, cfg)
         n_total = len(noisy_p)
         n_val = int(n_total * 0.1)
-        indices = np.random.RandomState(int(cfg["experiment"]["seed"])).permutation(n_total)
+        indices = np.random.RandomState(seed).permutation(n_total)
         train_idx, val_idx = indices[n_val:], indices[:n_val]
         train_n, train_c, train_g = noisy_p[train_idx], clean_p[train_idx], gr_p[train_idx]
         val_n, val_c, val_g = noisy_p[val_idx], clean_p[val_idx], gr_p[val_idx]
@@ -285,12 +337,25 @@ def main() -> None:
     val_ds = torch.utils.data.TensorDataset(
         torch.from_numpy(val_n), torch.from_numpy(val_c), torch.from_numpy(val_g)
     )
-    bs = int(cfg["data"]["loader"].get("batch_size", 16))
-    nw = int(cfg["data"]["loader"].get("num_workers", 4))
-    train_loader = torch.utils.data.DataLoader(train_ds, batch_size=bs, shuffle=True, num_workers=nw, pin_memory=True)
-    val_loader = torch.utils.data.DataLoader(val_ds, batch_size=bs, shuffle=False, num_workers=nw, pin_memory=True)
+
     train_sampler = None
-    eval_train_loader: Any = None
+    if distributed:
+        train_sampler = torch.utils.data.DistributedSampler(
+            train_ds, num_replicas=world_size, rank=rank, shuffle=True, seed=seed,
+        )
+        val_sampler = torch.utils.data.DistributedSampler(
+            val_ds, num_replicas=world_size, rank=rank, shuffle=False, seed=seed,
+        )
+        eval_train_sampler = torch.utils.data.DistributedSampler(
+            train_ds, num_replicas=world_size, rank=rank, shuffle=False, seed=seed,
+        )
+        train_loader = torch.utils.data.DataLoader(train_ds, batch_size=bs, sampler=train_sampler, num_workers=nw, pin_memory=pm, drop_last=False)
+        val_loader = torch.utils.data.DataLoader(val_ds, batch_size=bs, sampler=val_sampler, num_workers=nw, pin_memory=pm, drop_last=False)
+        eval_train_loader = torch.utils.data.DataLoader(train_ds, batch_size=bs, sampler=eval_train_sampler, num_workers=nw, pin_memory=pm, drop_last=False)
+    else:
+        train_loader = torch.utils.data.DataLoader(train_ds, batch_size=bs, shuffle=True, num_workers=nw, pin_memory=pm)
+        val_loader = torch.utils.data.DataLoader(val_ds, batch_size=bs, shuffle=False, num_workers=nw, pin_memory=pm)
+        eval_train_loader = torch.utils.data.DataLoader(train_ds, batch_size=bs, shuffle=False, num_workers=nw, pin_memory=pm)
 
     # model
     model = build_model(cfg["model"]).to(device)
@@ -330,6 +395,7 @@ def main() -> None:
 
     eval_interval = int(cfg["train"].get("eval_interval", 1))
     ckpt_interval = int(cfg["train"].get("ckpt_interval", 20))
+    vis_interval = int(cfg["train"].get("vis_interval", 5))
     grad_clip = cfg["train"].get("grad_clip")
     detect_anomaly = bool(cfg["train"].get("detect_anomaly", False))
     if detect_anomaly:
@@ -404,47 +470,89 @@ def main() -> None:
         if scheduler is not None:
             scheduler.step()
 
-        train_loss = total_loss_sum / max(n_batches, 1)
+        if distributed:
+            stat = torch.tensor([float(total_loss_sum), float(n_batches)], device=device, dtype=torch.float64)
+            torch.distributed.all_reduce(stat, op=torch.distributed.ReduceOp.SUM)
+            train_loss = float(stat[0].item() / max(stat[1].item(), 1.0))
+        else:
+            train_loss = total_loss_sum / max(n_batches, 1)
 
-        # evaluation: use CNN1 output as denoised signal
+        # --- evaluation: use CNN1 output as denoised signal (all ranks) ----
         val_losses = {"val": float("nan")}
         val_metrics: Dict[str, float] = {}
         train_metrics: Dict[str, float] = {}
 
-        if rank == 0:
-            # fast eval on part of train set
-            train_metrics = {n: float("nan") for n in metric_names}
+        if epoch == 0 or (epoch + 1) % eval_interval == 0:
+            model.eval()
 
-            if (epoch + 1) % eval_interval == 0:
-                model_eval = model.module if hasattr(model, "module") else model
-                model_eval.eval()
-                mse_sum = 0.0
-                total = 0
-                metric_sums: Dict[str, float] = {}
-                from utils.metrics import compute_metrics
-                with torch.no_grad():
-                    for z_b, x_b, _ in val_loader:
-                        z_b = z_b.to(device)
-                        x_b = x_b.to(device)
-                        B = z_b.shape[0]
-                        x_pr = model_eval.denoise(z_b)
-                        mse_sum += F.mse_loss(x_pr, x_b).item() * B
-                        total += B
-                        bm = compute_metrics(metrics, x_pr, x_b)
-                        for k, v in bm.items():
-                            metric_sums[k] = metric_sums.get(k, 0.0) + v * B
-                val_losses["val"] = mse_sum / max(total, 1)
-                val_metrics = {k: v / max(total, 1) for k, v in metric_sums.items()}
+            from utils.metrics import compute_metrics
 
-                if val_losses["val"] < best_val_loss:
-                    best_val_loss = val_losses["val"]
-                    from utils.train_utils import maybe_save_best_checkpoint as _best
-                    _best(
-                        exp_dir / "checkpoints" / "best.pt",
-                        model=model, optimizer=optimizer, scheduler=scheduler,
-                        epoch=epoch, val_loss=val_losses["val"],
-                        best_val_loss=best_val_loss, extras={"config": cfg}, logger=logger,
-                    )
+            # --- train set evaluation ---
+            t_mse_sum = 0.0
+            t_total = 0
+            t_metric_sums: Dict[str, float] = {}
+            with torch.no_grad():
+                for z_b, x_b, _ in eval_train_loader:
+                    z_b = z_b.to(device, non_blocking=True)
+                    x_b = x_b.to(device, non_blocking=True)
+                    B = z_b.shape[0]
+                    x_pr = model.module.denoise(z_b) if hasattr(model, "module") else model.denoise(z_b)
+                    t_mse_sum += F.mse_loss(x_pr, x_b).item() * B
+                    t_total += B
+                    bm = compute_metrics(metrics, x_pr, x_b)
+                    for k, v in bm.items():
+                        t_metric_sums[k] = t_metric_sums.get(k, 0.0) + v * B
+
+            # --- val set evaluation ---
+            v_mse_sum = 0.0
+            v_total = 0
+            v_metric_sums: Dict[str, float] = {}
+            with torch.no_grad():
+                for z_b, x_b, _ in val_loader:
+                    z_b = z_b.to(device, non_blocking=True)
+                    x_b = x_b.to(device, non_blocking=True)
+                    B = z_b.shape[0]
+                    x_pr = model.module.denoise(z_b) if hasattr(model, "module") else model.denoise(z_b)
+                    v_mse_sum += F.mse_loss(x_pr, x_b).item() * B
+                    v_total += B
+                    bm = compute_metrics(metrics, x_pr, x_b)
+                    for k, v in bm.items():
+                        v_metric_sums[k] = v_metric_sums.get(k, 0.0) + v * B
+
+            # all-reduce partial sums
+            if distributed:
+                t_keys = sorted(t_metric_sums.keys())
+                v_keys = sorted(v_metric_sums.keys())
+                stat = torch.tensor(
+                    [t_mse_sum, float(t_total), v_mse_sum, float(v_total)]
+                    + [t_metric_sums.get(k, 0.0) for k in t_keys]
+                    + [v_metric_sums.get(k, 0.0) for k in v_keys],
+                    device=device, dtype=torch.float64,
+                )
+                torch.distributed.all_reduce(stat, op=torch.distributed.ReduceOp.SUM)
+                t_mse_sum = float(stat[0].item())
+                t_total = int(stat[1].item())
+                v_mse_sum = float(stat[2].item())
+                v_total = int(stat[3].item())
+                for i, k in enumerate(t_keys):
+                    t_metric_sums[k] = float(stat[4 + i].item())
+                for i, k in enumerate(v_keys):
+                    v_metric_sums[k] = float(stat[4 + len(t_keys) + i].item())
+
+            if t_total > 0:
+                train_metrics = {k: v / max(t_total, 1) for k, v in t_metric_sums.items()}
+            val_losses["val"] = v_mse_sum / max(v_total, 1)
+            val_metrics = {k: v / max(v_total, 1) for k, v in v_metric_sums.items()}
+
+            if rank == 0 and val_losses["val"] < best_val_loss:
+                best_val_loss = val_losses["val"]
+                from utils.train_utils import maybe_save_best_checkpoint as _best
+                _best(
+                    exp_dir / "checkpoints" / "best.pt",
+                    model=model, optimizer=optimizer, scheduler=scheduler,
+                    epoch=epoch, val_loss=val_losses["val"],
+                    best_val_loss=best_val_loss, extras={"config": cfg}, logger=logger,
+                )
 
         metric_row: Dict[str, float] = {}
         for name in metric_names:
@@ -456,6 +564,17 @@ def main() -> None:
 
         if rank == 0 and (epoch + 1) % ckpt_interval == 0:
             save_checkpoint(exp_dir / "checkpoints" / f"epoch_{epoch:04d}.pt", model=model, optimizer=optimizer, scheduler=scheduler, epoch=epoch, extras={"config": cfg})
+
+        # --- visualization (rank 0) ----------------------------------------
+        if rank == 0 and vis_interval > 0 and (epoch == 0 or (epoch + 1) % vis_interval == 0):
+            _visualize_physics_sample(
+                model=model.module if hasattr(model, "module") else model,
+                loader=val_loader,
+                save_path=exp_dir / "visualizations" / f"epoch_{epoch:04d}.png",
+                device=device,
+                title=f"Physics {model_type} epoch {epoch}",
+                seed=None,
+            )
 
     elapsed = time.time() - start_time
     if logger is not None:

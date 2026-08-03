@@ -3,7 +3,7 @@
 # but the existing supervised denoise trainer optimizes the generator only.
 
 experiment:
-  name: denoise_sagan_base0706
+  name: denoise_sagan_base0714
   output_dir: /data/shared/benchmark/multiples/results
   seed: 42
   device: cuda:4
@@ -21,12 +21,12 @@ data:
     test: 64
 
   loader:
-    batch_size: 2
+    batch_size: 8
     num_workers: 4
     pin_memory: true
 
 preprocess:
-  normalize_mode: mean_std
+  normalize_mode: max_abs
   normalize_scope: global
   patch_time: 512
   patch_trace: 256
@@ -40,7 +40,7 @@ model:
     out_channels: 1
     base_channels: 64
     norm: none
-    final_activation: identity
+    final_activation: tanh
 
 loss:
   type: mse

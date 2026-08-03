@@ -5,16 +5,16 @@
 # Set input_path / target_path; shapes must match after load_volume.
 
 experiment:
-  name: denoise_physics_base0511
-  output_dir: /data/shared/benchmark/ground_roll/results_0510
+  name: denoise_physics_base0801
+  output_dir: /data/shared/benchmark/ground_roll/results_0801
   seed: 42
   device: cuda:4
 
 data:
   segy_pair:
-    input_path: /data/shared/benchmark/ground_roll/noisy/SEGC3_shots1_9_noisy_1.0.sgy
-    target_path: /data/shared/benchmark/ground_roll/noise/SEGC3_shots1_9_noise_1.0.sgy
-    traces_per_shot: 201
+    input_path: /home/gaotianxiang/code/forwarding5D/new_gr_data/SEGC3_shots72_noisy_1.0.sgy
+    target_path: /home/gaotianxiang/code/forwarding5D/new_gr_data/SEGC3_shots72_noise_1.0.sgy
+    traces_per_shot: 250
     time_downsample: 1
 
   shot_split:
