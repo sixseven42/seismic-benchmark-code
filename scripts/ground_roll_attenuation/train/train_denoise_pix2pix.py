@@ -1,7 +1,7 @@
 """Pix2Pix cGAN for ground-roll attenuation (paired volumes + DDP via ``torchrun``).
 
 CUDA_VISIBLE_DEVICES=6,7 torchrun --nproc_per_node=2 \\
-    scripts/ground_roll_attenuation/train_denoise_pix2pix.py \\
+    scripts/ground_roll_attenuation/train/train_denoise_pix2pix.py \\
     --config configs/ground_roll_attenuation/denoise_pix2pix.yaml
 """
 
@@ -203,7 +203,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--config",
         type=str,
-        default=default_config_relpath_for_train_script(__file__),
+        default="configs/ground_roll_attenuation/denoise_pix2pix.yaml",
         help="Path to pix2pix config YAML.",
     )
     return parser.parse_args()

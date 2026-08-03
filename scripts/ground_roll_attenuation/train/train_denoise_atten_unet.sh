@@ -1,24 +1,24 @@
 #!/usr/bin/env bash
 # Nested loop: for each noise-intensity level, run multiple seeds.
-# Output dirs: ``<yaml name>_level<level>_seed<seed>``.
+# Output dirs don't collide: experiment name is ``<yaml name>_level<level>_seed<seed>``.
 # Configure NOISE_LEVELS / N_SEEDS / START_SEED below.
 
 set -euo pipefail
 
 # ---------- Configuration ----------
-CUDA_VISIBLE_DEVICES="4,5,6,7" 
-NPROC_PER_NODE=4
-NOISE_LEVELS=(1.0 3.0 5.0 7.0 9.0)
-N_SEEDS=3
-START_SEED=42
-MASTER_PORT=29800
-TORCHRUN_EXTRA=""
+CUDA_VISIBLE_DEVICES="0,1" # physical GPUs, comma-separated
+NPROC_PER_NODE=2           # must match the number of visible GPUs
+NOISE_LEVELS=(1.0 3.0 5.0 7.0 9.0)  # noise intensities to run
+N_SEEDS=3                  # number of seeds per noise level
+START_SEED=42              # first seed; subsequent seeds are START_SEED+1, START_SEED+2, ...
+MASTER_PORT=29500          # base port for torchrun; incremented per run to avoid EADDRINUSE
+TORCHRUN_EXTRA=""          # optional: extra flags for torchrun, e.g. "--standalone"
 # ------------------------------------
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-BASE_CONFIG="${REPO_ROOT}/configs/ground_roll_attenuation/denoise_enhanced_unet.yaml"
-PY_SCRIPT="${REPO_ROOT}/scripts/ground_roll_attenuation/train_denoise_enhanced_unet.py"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
+BASE_CONFIG="${REPO_ROOT}/configs/ground_roll_attenuation/denoise_atten_unet.yaml"
+PY_SCRIPT="${REPO_ROOT}/scripts/ground_roll_attenuation/train/train_denoise_atten_unet.py"
 
 export CUDA_VISIBLE_DEVICES
 

@@ -5,7 +5,7 @@ Two phases:
   2. Train separation network CNN1+CNN2+CNN3 with full joint loss
 
 CUDA_VISIBLE_DEVICES=6,7 torchrun --nproc_per_node=2 \\
-    scripts/ground_roll_attenuation/train_denoise_physics.py \\
+    scripts/ground_roll_attenuation/train/train_denoise_physics.py \\
     --config configs/ground_roll_attenuation/denoise_physics.yaml
 """
 
@@ -268,7 +268,7 @@ def _visualize_physics_sample(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train physics-constrained separation network.")
-    parser.add_argument("--config", type=str, default=default_config_relpath_for_train_script(__file__))
+    parser.add_argument("--config", type=str, default="configs/ground_roll_attenuation/denoise_physics.yaml")
     parser.add_argument("--pretrain_classifier", action="store_true", help="Pre-train f-k classifier only.")
     return parser.parse_args()
 

@@ -2,8 +2,8 @@
 set -euo pipefail
 
 # ---------- Configuration ----------
-CUDA_VISIBLE_DEVICES="0,1,2,3" 
-NPROC_PER_NODE=4
+CUDA_VISIBLE_DEVICES="6,7" 
+NPROC_PER_NODE=2
 NOISE_LEVELS=(1.0)
 N_SEEDS=1
 START_SEED=42
@@ -12,9 +12,9 @@ TORCHRUN_EXTRA=""
 # ------------------------------------
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-BASE_CONFIG="${REPO_ROOT}/configs/ground_roll_attenuation/denoise_sanet.yaml"
-PY_SCRIPT="${REPO_ROOT}/scripts/ground_roll_attenuation/train_denoise_sanet.py"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
+BASE_CONFIG="${REPO_ROOT}/configs/ground_roll_attenuation/denoise_sanet_field1.yaml"
+PY_SCRIPT="${REPO_ROOT}/scripts/ground_roll_attenuation/train/train_denoise_sanet.py"
 
 export CUDA_VISIBLE_DEVICES
 

@@ -5,7 +5,7 @@ in this benchmark).  Denoised = input - predicted_noise.
 Loss = MSE + λ * AFM (adaptive frequency modulation in f-x domain via torch.fft).
 
 CUDA_VISIBLE_DEVICES=6,7 torchrun --nproc_per_node=2 \\
-    scripts/ground_roll_attenuation/train_denoise_enhanced_unet.py \\
+    scripts/ground_roll_attenuation/train/train_denoise_enhanced_unet.py \\
     --config configs/ground_roll_attenuation/denoise_enhanced_unet.yaml
 """
 
@@ -159,7 +159,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--config",
         type=str,
-        default=default_config_relpath_for_train_script(__file__),
+        default="configs/ground_roll_attenuation/denoise_enhanced_unet.yaml",
         help="Path to config YAML.",
     )
     return parser.parse_args()

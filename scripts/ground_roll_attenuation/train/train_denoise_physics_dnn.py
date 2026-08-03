@@ -1,12 +1,8 @@
-"""SANet for ground-roll attenuation: paired volumes + DDP via ``torchrun``.
+"""SEG-Y denoising: paired volumes + supervised patch training (YAML model; multi-GPU via ``torchrun`` + DDP).
 
-The model predicts the additive ground-roll noise component.
-Denoised signal = noisy_input - predicted_noise.
-Metrics compute on denoised signal vs clean reference.
-
-CUDA_VISIBLE_DEVICES=6,7 torchrun --nproc_per_node=2 \\
-    scripts/ground_roll_attenuation/train_denoise_sanet.py \\
-    --config configs/ground_roll_attenuation/denoise_sanet.yaml
+CUDA_VISIBLE_DEVICES=6,7 torchrun --nproc_per_node=2 \
+    scripts/ground_roll_attenuation/train/train_denoise_physics_dnn.py \
+    --config configs/ground_roll_attenuation/denoise_physics_dnn.yaml
 """
 
 from __future__ import annotations
@@ -20,6 +16,8 @@ from typing import Any, Dict, Optional, Tuple
 import numpy as np
 import torch
 
+# Bootstrap repo root into sys.path BEFORE importing utils/model. Walks up from
+# this file looking for a directory that contains both ``model/`` and ``utils/``.
 _REPO_ROOT = next(
     (p for p in Path(__file__).resolve().parents
      if (p / "model").is_dir() and (p / "utils").is_dir()),
@@ -64,14 +62,19 @@ from utils import (  # noqa: E402
 
 
 def _preprocess_shots(cfg: Dict[str, Any]) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Load paired denoise volumes, preprocess, and return ``(input_shots, target_shots, per_shot_ffid)``."""
     prep = cfg["preprocess"]
+
     pair_cfg = None
     for key in ("segy_pair", "npy_pair", "mat_pair"):
         if key in cfg["data"]:
             pair_cfg = cfg["data"][key]
             break
     if pair_cfg is None:
-        raise ValueError("No paired data source found in config.")
+        raise ValueError(
+            "No paired data source found in config (expected data.segy_pair, "
+            "data.npy_pair, or data.mat_pair)."
+        )
 
     input_cfg = dict(pair_cfg)
     input_cfg["path"] = pair_cfg["input_path"]
@@ -83,7 +86,7 @@ def _preprocess_shots(cfg: Dict[str, Any]) -> Tuple[np.ndarray, np.ndarray, np.n
 
     if input_shots.shape != target_shots.shape:
         raise ValueError(
-            f"Paired volume shape mismatch: "
+            "Paired volume shape mismatch: "
             f"input {input_shots.shape} vs target {target_shots.shape}."
         )
     if prep.get("max_shots") is not None:
@@ -92,16 +95,37 @@ def _preprocess_shots(cfg: Dict[str, Any]) -> Tuple[np.ndarray, np.ndarray, np.n
         target_shots = target_shots[:m]
 
     skip = set(prep.get("skip", []))
+
     if "normalize" not in skip:
         mode = str(prep.get("normalize_mode", "max_abs"))
         per = str(prep.get("normalize_scope", "global"))
         clip_raw = prep.get("clip_percentile")
         clip_p = float(clip_raw) if clip_raw is not None else None
-        input_shots, in_stats = normalize(input_shots, mode=mode, per=per, clip_percentile=clip_p)
-        target_shots, _ = normalize(target_shots, mode=mode, per=per, override_stats=in_stats)
 
+        mode_keys = {
+            "minmax": ("min", "max"),
+            "max_abs": ("max_abs",),
+            "mean_std": ("mean", "std"),
+        }
+        if mode not in mode_keys:
+            raise ValueError(
+                f"Unknown normalize_mode {mode!r} for paired denoise pipeline."
+            )
+
+        input_shots, in_stats = normalize(
+            input_shots, mode=mode, per=per, clip_percentile=clip_p
+        )
+        target_shots, _ = normalize(
+            target_shots,
+            mode=mode,
+            per=per,
+            override_stats=in_stats,
+        )
+
+    # Extract per-shot FFID from the input volume (assumed identical for target).
     if input_cfg.get("path", "").lower().endswith((".sgy", ".segy")):
         from tools.segy_read import read_regular_shots
+
         _, headers = read_regular_shots(
             input_cfg["path"],
             traces_per_shot=int(input_cfg.get("traces_per_shot", 201)),
@@ -118,23 +142,41 @@ def _preprocess_shots(cfg: Dict[str, Any]) -> Tuple[np.ndarray, np.ndarray, np.n
 def _patchify_pairs(
     input_shots: np.ndarray, target_shots: np.ndarray, cfg: Dict[str, Any]
 ) -> Tuple[np.ndarray, np.ndarray]:
+    """Patchify given shot subsets."""
     prep = cfg["preprocess"]
     patch_t = int(prep.get("patch_time", 256))
     patch_x = int(prep.get("patch_trace", 128))
     overlap = float(prep.get("patch_overlap", 0.5))
-    target_patches, _ = patchify_uniform(target_shots, patch_size=(patch_x, patch_t), overlap=overlap, output_ndim=4)
-    input_patches, _ = patchify_uniform(input_shots, patch_size=(patch_x, patch_t), overlap=overlap, output_ndim=4)
+
+    target_patches, _ = patchify_uniform(
+        target_shots, patch_size=(patch_x, patch_t), overlap=overlap, output_ndim=4
+    )
+    input_patches, _ = patchify_uniform(
+        input_shots, patch_size=(patch_x, patch_t), overlap=overlap, output_ndim=4
+    )
     return input_patches.astype(np.float32), target_patches.astype(np.float32)
 
 
 def _build_denoise_patch_pairs(cfg: Dict[str, Any]) -> Tuple[np.ndarray, np.ndarray]:
+    """Backward-compatible full pipeline."""
     inp, tgt, _ = _preprocess_shots(cfg)
     return _patchify_pairs(inp, tgt, cfg)
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train SANet for ground-roll attenuation.")
-    parser.add_argument("--config", type=str, default=default_config_relpath_for_train_script(__file__))
+    parser = argparse.ArgumentParser(
+        description=(
+            "Train denoising from paired volumes (sgy/npy/mat). "
+            "Default config path matches this script name (configs/<name>.yaml). "
+            "Multi-GPU: torchrun --nproc_per_node=N ..."
+        )
+    )
+    parser.add_argument(
+        "--config",
+        type=str,
+        default="configs/ground_roll_attenuation/denoise_physics_dnn.yaml",
+        help="Path to denoise config (expects data.*_pair).",
+    )
     return parser.parse_args()
 
 
@@ -145,24 +187,37 @@ def main() -> None:
     cfg["metrics"] = resolve_denoise_metrics(cfg)
 
     distributed, rank, local_rank, world_size = init_distributed()
+
     set_seed(int(cfg["experiment"]["seed"]))
     exp_dir = setup_experiment_dir_distributed(cfg, rank, distributed, base_dir=_REPO_ROOT)
     device = training_device(cfg, distributed=distributed, local_rank=local_rank)
 
     if "shot_split" in cfg.get("data", {}):
         train_loader, val_loader, train_sampler, eval_train_loader = build_shot_split_loaders(
-            cfg, preprocess_fn=_preprocess_shots, patchify_fn=_patchify_pairs,
-            rank=rank, world_size=world_size, distributed=distributed,
+            cfg,
+            preprocess_fn=_preprocess_shots,
+            patchify_fn=_patchify_pairs,
+            rank=rank,
+            world_size=world_size,
+            distributed=distributed,
             test_set_dir=exp_dir / "test_set",
         )
     else:
         train_loader, val_loader, train_sampler, eval_train_loader = build_loaders(
-            cfg, build_patch_pairs_fn=_build_denoise_patch_pairs,
-            rank=rank, world_size=world_size, distributed=distributed,
+            cfg,
+            build_patch_pairs_fn=_build_denoise_patch_pairs,
+            rank=rank,
+            world_size=world_size,
+            distributed=distributed,
         )
 
     model = build_model(cfg["model"]).to(device)
-    model = maybe_wrap_ddp(model, distributed=distributed, device=device, local_rank=local_rank)
+    model = maybe_wrap_ddp(
+        model,
+        distributed=distributed,
+        device=device,
+        local_rank=local_rank,
+    )
     model_type = str(cfg["model"]["type"])
     loss_fn = build_loss(cfg["loss"]).to(device)
     metrics = build_metrics(cfg["metrics"])
@@ -179,21 +234,28 @@ def main() -> None:
             plot_interval=int(cfg["log"].get("plot_interval", 5)),
         )
     if logger is not None:
-        logger.info(f"Model {model_type} | train/val patches: {len(train_loader.dataset)} / {len(val_loader.dataset)}")
+        logger.info(
+            f"Model {model_type} | train/val patches: {len(train_loader.dataset)} / {len(val_loader.dataset)}"
+        )
 
     total_epochs = int(cfg["train"]["epochs"])
     eval_interval = int(cfg["train"].get("eval_interval", 1))
-    ckpt_interval = int(cfg["train"].get("ckpt_interval", 20))
+    ckpt_interval = int(cfg["train"].get("ckpt_interval", 5))
     vis_interval = int(cfg["train"].get("vis_interval", 5))
     log_step = bool(cfg["train"].get("log_step", False))
+
     best_val_loss = float("inf")
     start_time = time.time()
-
     for epoch in range(total_epochs):
         sampler_set_epoch(train_sampler, epoch)
         train_stats = train_one_epoch(
-            model=model, loader=train_loader, loss_fn=loss_fn, optimizer=optimizer,
-            device=device, epoch=epoch, scheduler=scheduler,
+            model=model,
+            loader=train_loader,
+            loss_fn=loss_fn,
+            optimizer=optimizer,
+            device=device,
+            epoch=epoch,
+            scheduler=scheduler,
             grad_clip=cfg["train"].get("grad_clip"),
             log_interval=int(cfg["train"].get("log_interval", 20)),
             logger=logger if log_step else None,
@@ -204,19 +266,32 @@ def main() -> None:
 
         if rank == 0 and eval_train_loader is not None:
             _, train_metrics = evaluate(
-                model=model, loader=eval_train_loader, loss_fn=loss_fn,
-                metrics=metrics, device=device, metrics_on_denoised_signal=True,
+                model=model,
+                loader=eval_train_loader,
+                loss_fn=loss_fn,
+                metrics=metrics,
+                device=device,
+                metrics_on_denoised_signal=True,
             )
             if (epoch + 1) % eval_interval == 0:
                 val_losses, val_metrics = evaluate(
-                    model=model, loader=val_loader, loss_fn=loss_fn,
-                    metrics=metrics, device=device, metrics_on_denoised_signal=True,
+                    model=model,
+                    loader=val_loader,
+                    loss_fn=loss_fn,
+                    metrics=metrics,
+                    device=device,
+                    metrics_on_denoised_signal=True,
                 )
                 best_val_loss = maybe_save_best_checkpoint(
                     exp_dir / "checkpoints" / "best.pt",
-                    model=model, optimizer=optimizer, scheduler=scheduler,
-                    epoch=epoch, val_loss=val_losses["val"],
-                    best_val_loss=best_val_loss, extras={"config": cfg}, logger=logger,
+                    model=model,
+                    optimizer=optimizer,
+                    scheduler=scheduler,
+                    epoch=epoch,
+                    val_loss=val_losses["val"],
+                    best_val_loss=best_val_loss,
+                    extras={"config": cfg},
+                    logger=logger,
                 )
 
         metric_row: Dict[str, float] = {}
@@ -225,17 +300,39 @@ def main() -> None:
             metric_row[f"val_{name}"] = val_metrics.get(name, float("nan"))
 
         if logger is not None:
-            logger.log_epoch(epoch=epoch, losses={"train": train_stats["train"], "val": val_losses.get("val", float("nan"))}, metrics=metric_row, extras={"lr": optimizer.param_groups[0]["lr"]})
+            logger.log_epoch(
+                epoch=epoch,
+                losses={
+                    "train": train_stats["train"],
+                    "val": val_losses.get("val", float("nan")),
+                },
+                metrics=metric_row,
+                extras={"lr": optimizer.param_groups[0]["lr"]},
+            )
 
         if rank == 0 and (epoch + 1) % ckpt_interval == 0:
-            save_checkpoint(exp_dir / "checkpoints" / f"epoch_{epoch:04d}.pt", model=model, optimizer=optimizer, scheduler=scheduler, epoch=epoch, extras={"config": cfg})
+            save_checkpoint(
+                exp_dir / "checkpoints" / f"epoch_{epoch:04d}.pt",
+                model=model,
+                optimizer=optimizer,
+                scheduler=scheduler,
+                epoch=epoch,
+                extras={"config": cfg},
+            )
 
         if rank == 0 and (epoch + 1) % vis_interval == 0:
-            visualize_random_sample(model=model, loader=val_loader, save_path=exp_dir / "visualizations" / f"epoch_{epoch:04d}.png", device=device, title=f"SANet {model_type} epoch {epoch}", seed=None)
+            visualize_random_sample(
+                model=model,
+                loader=val_loader,
+                save_path=exp_dir / "visualizations" / f"epoch_{epoch:04d}.png",
+                device=device,
+                title=f"Denoise {model_type} epoch {epoch}",
+                seed=None,
+            )
 
     elapsed = time.time() - start_time
     if logger is not None:
-        logger.info(f"SANet training finished in {elapsed:.2f}s ({elapsed/60:.2f} min).")
+        logger.info(f"Denoise {model_type} training finished in {elapsed:.2f}s ({elapsed/60:.2f} min).")
         logger.close()
     destroy_distributed()
 

@@ -1,7 +1,7 @@
 """SEG-Y denoising: paired volumes + supervised patch training (YAML model; multi-GPU via ``torchrun`` + DDP).
 
 CUDA_VISIBLE_DEVICES=6,7 torchrun --nproc_per_node=2 \
-    scripts/ground_roll_attenuation/train_denoise_dfb_cnn.py \
+    scripts/ground_roll_attenuation/train/train_denoise_dfb_cnn.py \
     --config configs/ground_roll_attenuation/denoise_dfb_cnn.yaml
 """
 
@@ -174,7 +174,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--config",
         type=str,
-        default=default_config_relpath_for_train_script(__file__),
+        default="configs/ground_roll_attenuation/denoise_dfb_cnn.yaml",
         help="Path to denoise config (expects data.*_pair).",
     )
     return parser.parse_args()
