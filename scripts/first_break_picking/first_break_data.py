@@ -133,6 +133,33 @@ def _resolve_label_path(data_path: Path, label_dir: Path) -> Path:
     )
 
 
+def _label_path_overrides(
+    data_cfg: Mapping[str, Any],
+    root: Path,
+) -> Dict[Path, Path]:
+    """Resolve optional explicit data-to-label SEG-Y path pairs."""
+    raw_overrides = data_cfg.get("label_path_overrides", [])
+    if not isinstance(raw_overrides, list):
+        raise ValueError("data.label_path_overrides must be a list when provided.")
+
+    overrides: Dict[Path, Path] = {}
+    for idx, raw in enumerate(raw_overrides):
+        if not isinstance(raw, Mapping) or "data_path" not in raw or "label_path" not in raw:
+            raise ValueError(
+                f"data.label_path_overrides[{idx}] must contain data_path and label_path."
+            )
+        data_path = as_path(root, str(raw["data_path"])).resolve()
+        label_path = as_path(root, str(raw["label_path"])).resolve()
+        if not data_path.is_file():
+            raise FileNotFoundError(f"Override data SEG-Y not found: {data_path}")
+        if not label_path.is_file():
+            raise FileNotFoundError(f"Override label SEG-Y not found: {label_path}")
+        if data_path in overrides:
+            raise ValueError(f"Duplicate label override for data SEG-Y: {data_path}")
+        overrides[data_path] = label_path
+    return overrides
+
+
 
 
 def _line_id_header_from_cfg(segment_cfg: Mapping[str, Any]) -> Optional[str]:
@@ -414,11 +441,14 @@ def build_first_break_index(cfg: Mapping[str, Any]) -> FirstBreakIndex:
     data_files = _iter_data_files(data_dir, data_cfg.get("files"))
     if not data_files:
         raise FileNotFoundError(f"No SEG-Y files found under {data_dir}.")
+    label_overrides = _label_path_overrides(data_cfg, root)
 
     for pair_idx, data_path in enumerate(data_files):
         if not data_path.exists():
             raise FileNotFoundError(f"Data SEG-Y not found: {data_path}")
-        label_path = _resolve_label_path(data_path, label_dir)
+        label_path = label_overrides.get(data_path.resolve())
+        if label_path is None:
+            label_path = _resolve_label_path(data_path, label_dir)
 
         with segyio.open(str(data_path), "r", ignore_geometry=True) as data_file, segyio.open(
             str(label_path), "r", ignore_geometry=True

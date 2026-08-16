@@ -8,6 +8,7 @@ from ..registry import MODEL_REGISTRY, build_model, register_model
 
 from . import atten_unet  # noqa: F401
 from . import dncnn_seg  # noqa: F401
+from . import dsu_net  # noqa: F401
 from . import res_unet  # noqa: F401
 from . import unet  # noqa: F401
 from . import hunet  # noqa: F401

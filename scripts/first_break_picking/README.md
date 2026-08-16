@@ -13,9 +13,9 @@ scripts/first_break_picking/
         <dataset>/run_<model>_gpu<N>.sh   Single-GPU launch scripts
 
 configs/first_break_picking/
-    pick_<model>_seed<42|43|44>.yaml              Mixed-dataset configs (12 files)
+    pick_<model>_seed<42|43|44>.yaml              Mixed-dataset configs (15 files)
     single_dataset/<dataset>/
-        pick_<model>_<dataset>_seed<42|43|44>.yaml   Single-dataset configs (48 files)
+        pick_<model>_<dataset>_seed<42|43|44>.yaml   Single-dataset configs (60 files)
 
 model/first_break_picking/
     <model>.py                       Model definition (registered via @register_model)
@@ -35,6 +35,7 @@ results/first_break_picking/
 | `train_pick_atten_unet.py` | `pick_atten_unet` | U-Net with CBAM attention gates |
 | `train_pick_res_unet.py` | `pick_res_unet` | Residual U-Net |
 | `train_pick_dncnn_seg.py` | `pick_dncnn_seg` | DnCNN-style segmentation CNN |
+| `train_pick_dsu_net.py` | `pick_dsu_net` | Dynamic Snake U-Net |
 
 ## Datasets
 
@@ -84,6 +85,10 @@ The dataset loader pairs data and label files automatically: for `data/<name>.sg
 2. `label/<name>_mask.segy`
 3. Any single file matching `label/<name>*_mask.*` (sgy/segy)
 
+When a data/mask pair lives outside the common directories, list the data path
+in `data.files` and map it explicitly with `data.label_path_overrides`. Relative
+override paths are resolved from `data.root`; absolute paths are used as-is.
+
 ### FFID / receiver-line segmentation
 
 The dataset splits data at the **FFID** (FieldRecord) level for train/val/test, then **optionally** subdivides each FFID gather into receiver-line segments based on:
@@ -116,6 +121,7 @@ data:
   label_dir: label                  # relative to root (or absolute)
   files: null                       # null = all .sgy/.segy under data_dir;
                                     # list = specific filenames, e.g. ["Dongbei.segy"]
+  label_path_overrides: []          # optional [{data_path: ..., label_path: ...}]
 
   label_threshold: 0.5              # threshold for binarizing label masks
   prediction_threshold: 0.5         # threshold for binarizing model output at test time

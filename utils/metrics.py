@@ -695,6 +695,8 @@ METRIC_REGISTRY["GatherCoverage"] = GatherCoverage
 METRIC_REGISTRY["MeanAbsoluteError"] = PickMAE
 METRIC_REGISTRY["MeanBiasError"] = MeanBiasError
 METRIC_REGISTRY["RootMeanSquaredError"] = PickRMSE
+METRIC_REGISTRY["MeanBiasError"] = MeanBiasError
+METRIC_REGISTRY["GatherCoverage"] = GatherCoverage
 
 
 @register_metric("pick_within")
