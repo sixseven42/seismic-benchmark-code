@@ -599,3 +599,14 @@
   - `test/test_inference_utils.py`: added regression coverage for pooled EB-WSE/FB-FRE values, explicit-reshape equivalence, and pre-reshape shape validation.
 - Impact: Ground-roll global, amplitude-binned, and frequency-binned metrics now use the same whole-volume reduction within each seed. Mean and standard deviation across independent seeds remain unchanged. Multiples attenuation keeps the existing per-panel behavior.
 - Follow-up: Recompute all compared ground-roll models into a new workbook so pooled and legacy binned values are not mixed.
+
+## 2026-08-23 - Split ground-roll configs and train scripts into field/sim variants
+
+- Context: ground-roll experiments cover both simulation and field datasets, and the flat config/train-script layout made the two hard to tell apart.
+- Change:
+  - `configs/ground_roll_attenuation/`: flat configs moved to `sim/`; added `field/` (14 models) and `my_data/` (field1/field2) variants.
+  - `scripts/ground_roll_attenuation/train/`: flat `.sh` scripts moved to `sim/`; added `field/` variants.
+  - `scripts/ground_roll_attenuation/train/train_denoise_physics.py`: fix best-checkpoint value tracking — `best_val_loss` now captures the value returned by `_best(...)` instead of being set unconditionally before the call.
+  - `.gitignore`: add `xibei_data`.
+  - New: `scripts/multiples_attenuation/upload_model_to_hf.py`, `tools/download_results_0822.sh`, `utils/pad_segy_shots_to_201.py`, and tests `test/test_ground_roll_batch_evaluate.py`, `test/test_inference_utils.py`.
+- Impact: field vs simulation runs are now separated by directory; existing experiment configs and result dirs are unchanged.

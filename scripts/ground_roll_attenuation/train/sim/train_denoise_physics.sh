@@ -15,8 +15,8 @@ TORCHRUN_EXTRA=""
 # ------------------------------------
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-BASE_CONFIG="${REPO_ROOT}/configs/ground_roll_attenuation/denoise_physics_field1.yaml"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
+BASE_CONFIG="${REPO_ROOT}/configs/ground_roll_attenuation/sim/denoise_physics.yaml"
 PY_SCRIPT="${REPO_ROOT}/scripts/ground_roll_attenuation/train/train_denoise_physics.py"
 
 export CUDA_VISIBLE_DEVICES

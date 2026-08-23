@@ -545,9 +545,8 @@ def main() -> None:
             val_metrics = {k: v / max(v_total, 1) for k, v in v_metric_sums.items()}
 
             if rank == 0 and val_losses["val"] < best_val_loss:
-                best_val_loss = val_losses["val"]
                 from utils.train_utils import maybe_save_best_checkpoint as _best
-                _best(
+                best_val_loss = _best(
                     exp_dir / "checkpoints" / "best.pt",
                     model=model, optimizer=optimizer, scheduler=scheduler,
                     epoch=epoch, val_loss=val_losses["val"],

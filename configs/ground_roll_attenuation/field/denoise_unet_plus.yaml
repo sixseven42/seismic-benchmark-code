@@ -1,0 +1,90 @@
+# UNet-Plus: wider variant (base_channels=64) of the standard U-Net.
+# Paired noise prediction: noisy input volume + noise label volume (same geometry).
+# Metrics (SNR/PSNR/SSIM/...) compare denoised estimate (noisy - pred_noise) to reference signal (noisy - label_noise).
+# Visualization still shows noisy input, predicted noise, and label noise.
+# Set input_path / target_path; shapes must match after load_volume.
+# Supported formats: segy_pair, npy_pair, mat_pair (pick one block).
+
+experiment:
+  name: denoise_unet_plus_base0615
+  output_dir: /data/shared/benchmark/ground_roll/results_0510
+  seed: 42
+  device: cuda:4
+
+data:
+  segy_pair:
+    input_path: /cloud/cloud-s3fs/data/field/noisy/dagang_noisy_padded201_1.0.sgy
+    target_path: /cloud/cloud-s3fs/data/field/noise/dagang_noise_padded201_1.0.sgy
+    traces_per_shot: 201
+    time_downsample: 1
+
+  # Shot-level FFID split: 111 shots split 89 / 11 / 11 (no leakage).
+  shot_split:
+    train: 89
+    val: 11
+    test: 11
+
+  loader:
+    batch_size: 196
+    num_workers: 4
+    pin_memory: true
+
+preprocess:
+  normalize_mode: max_abs
+  normalize_scope: global
+  patch_time: 256
+  patch_trace: 128
+  patch_overlap: 0.5
+  max_shots: null
+
+model:
+  type: unet
+  params:
+    in_channels: 1
+    out_channels: 1
+    base_channels: 64
+    depth: 4
+
+loss:
+  type: mse
+  params:
+    reduction: mean
+
+metrics:
+  - name: snr
+    params: { reduction: per_sample }
+  - name: psnr
+    params: { data_range: 1.0, reduction: per_sample }
+  - name: ssim
+    params: { data_range: 2.0, window_size: 11, sigma: 1.5 }
+  - name: mae
+    params: {}
+  - name: mse
+    params: {}
+  - name: rmse
+    params: { reduction: per_sample }
+
+optim:
+  type: adamw
+  params:
+    lr: 1.0e-4
+    weight_decay: 1.0e-5
+
+scheduler:
+  type: cosine
+  params:
+    min_lr: 1.0e-6
+
+train:
+  epochs: 200
+  grad_clip: 1.0
+  log_step: false
+  log_interval: 10
+  eval_interval: 1
+  ckpt_interval: 20
+  vis_interval: 5
+  resume: null
+
+log:
+  log_dir: logs
+  plot_interval: 5

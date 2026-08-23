@@ -6,19 +6,19 @@
 set -euo pipefail
 
 # ---------- Configuration ----------
-CUDA_VISIBLE_DEVICES="0,1,2,6" # physical GPUs, comma-separated
-NPROC_PER_NODE=4           # must match the number of visible GPUs
-NOISE_LEVELS=(1.0 3.0 5.0 7.0 9.0)  # noise intensities to run
-N_SEEDS=3                  # number of seeds per noise level
+CUDA_VISIBLE_DEVICES="0,1,2,3" # physical GPUs, comma-separated
+NPROC_PER_NODE=4         # must match the number of visible GPUs
+NOISE_LEVELS=(1.0)  # noise intensities to run
+N_SEEDS=1                  # number of seeds per noise level
 START_SEED=42              # first seed; subsequent seeds are START_SEED+1, START_SEED+2, ...
-MASTER_PORT=29501          # base port for torchrun; incremented per run to avoid EADDRINUSE
+MASTER_PORT=28500          # base port for torchrun; incremented per run to avoid EADDRINUSE
 TORCHRUN_EXTRA=""          # optional: extra flags for torchrun, e.g. "--standalone"
 # ------------------------------------
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-BASE_CONFIG="${REPO_ROOT}/configs/ground_roll_attenuation/denoise_physics_dnn.yaml"
-PY_SCRIPT="${REPO_ROOT}/scripts/ground_roll_attenuation/train/train_denoise_physics_dnn.py"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
+BASE_CONFIG="${REPO_ROOT}/configs/ground_roll_attenuation/field/denoise_unet.yaml"
+PY_SCRIPT="${REPO_ROOT}/scripts/ground_roll_attenuation/train/train_denoise_unet.py"
 
 export CUDA_VISIBLE_DEVICES
 

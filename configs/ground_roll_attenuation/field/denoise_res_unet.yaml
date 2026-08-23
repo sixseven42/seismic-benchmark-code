@@ -5,26 +5,26 @@
 # Supported formats: segy_pair, npy_pair, mat_pair (pick one block).
 
 experiment:
-  name: denoise_atten_unet_base0510
-  output_dir: /data/shared/benchmark/ground_roll/results
+  name: denoise_res_unet_base0510
+  output_dir: /data/shared/benchmark/ground_roll/results_0510
   seed: 42
   device: cuda:4
 
 data:
   segy_pair:
-    input_path: /data/shared/benchmark/ground_roll/noisy/SEGC3_shots1_9_noisy_1.0.sgy
-    target_path: /data/shared/benchmark/ground_roll/noise/SEGC3_shots1_9_noise_1.0.sgy  # noise label (supervised target)
+    input_path: /cloud/cloud-s3fs/data/field/noisy/dagang_noisy_padded201_1.0.sgy
+    target_path: /cloud/cloud-s3fs/data/field/noise/dagang_noise_padded201_1.0.sgy
     traces_per_shot: 201
     time_downsample: 1
 
-  # Shot-level FFID split: first 7 → train, next 1 → val, last 1 → test (no leakage).
+  # Shot-level FFID split: 111 shots split 89 / 11 / 11 (no leakage).
   shot_split:
-    train: 7
-    val: 1
-    test: 1
+    train: 89
+    val: 11
+    test: 11
 
   loader:
-    batch_size: 64
+    batch_size: 196
     num_workers: 4
     pin_memory: true
 
@@ -39,7 +39,7 @@ preprocess:
   max_shots: null
 
 model:
-  type: atten_unet
+  type: res_unet
   params:
     in_channels: 1
     out_channels: 1

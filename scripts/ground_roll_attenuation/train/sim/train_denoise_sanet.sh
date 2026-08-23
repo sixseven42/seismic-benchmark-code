@@ -12,8 +12,8 @@ TORCHRUN_EXTRA=""
 # ------------------------------------
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-BASE_CONFIG="${REPO_ROOT}/configs/ground_roll_attenuation/denoise_sanet_field1.yaml"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../.." && pwd)"
+BASE_CONFIG="${REPO_ROOT}/configs/ground_roll_attenuation/sim/denoise_sanet.yaml"
 PY_SCRIPT="${REPO_ROOT}/scripts/ground_roll_attenuation/train/train_denoise_sanet.py"
 
 export CUDA_VISIBLE_DEVICES
