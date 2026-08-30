@@ -610,3 +610,19 @@
   - `.gitignore`: add `xibei_data`.
   - New: `scripts/multiples_attenuation/upload_model_to_hf.py`, `tools/download_results_0822.sh`, `utils/pad_segy_shots_to_201.py`, and tests `test/test_ground_roll_batch_evaluate.py`, `test/test_inference_utils.py`.
 - Impact: field vs simulation runs are now separated by directory; existing experiment configs and result dirs are unchanged.
+
+## 2026-08-26 - collect_evaluation.py: option to skip npy/ (visualizations only)
+
+- Context: `tools/collect_evaluation.py` packaged whole `evaluation/` trees; the full-volume `npy/` arrays (~1 GB per experiment) dominate the archive when only the per-shot visualizations are wanted for sharing.
+- Change: added `--exclude-npy` flag (default False, backward compatible). Copy mode passes `shutil.ignore_patterns("npy")` to `copytree`; archive mode passes a `tar.add` filter that drops the `npy` directory member (children are skipped automatically); the dry-run / per-dir size report now uses a new `_collect_size` helper that skips `npy` when the flag is set.
+- Impact: `--exclude-npy` yields only `evaluation/visualizations/` (~37 MB vs ~1 GB per dir); existing calls without the flag behave exactly as before.
+
+## 2026-08-26 - Physics: persist test_set + shared FFID split helper + backfill
+
+- Context: `batch_evaluate.py --models physics` matched 0 experiments because `discover_results` requires `test_set/`, which `train_denoise_physics.py` never saved. The 3 `denoise_physics_base0822_level1.0_seed{42,43,44}` dirs were skipped.
+- Change:
+  - `utils/train_utils.py`: extracted `ffid_split_masks(per_shot_ffid, n_train, n_val, n_test) -> (train, val, test)` from `build_shot_split_loaders`; split semantics unchanged (unique FFID values sorted; first n_train / next n_val / last n_test unique values; all shots sharing a value stay together).
+  - `scripts/ground_roll_attenuation/train/train_denoise_physics.py`: computes `test_mask` via the shared helper and persists `test_set/{input_shots,target_shots,ffid}.npy` on rank 0. `input_shots` = normalized noisy volume, `target_shots` = normalized ground-roll noise so batch_evaluate's `clean_ref = input - target` recovers the clean signal.
+  - New `scripts/ground_roll_attenuation/backfill_physics_test_set.py`: regenerates missing `test_set/` for existing Physics result dirs. Reuses `_preprocess_shots` from the training script via importlib (no duplication) plus `ffid_split_masks`; caches the preprocessed volumes across dirs sharing the same SEG-Y pair (~8 GB, so one load serves all seeds); cross-checks `ffid.npy` against a sibling unet test set when present; `--force` overwrites an existing test_set.
+- Data fact: the field SEG-Y (`dagang_noisy_padded201_1.0.sgy`, ~1699 shots) has FieldRecord header values that are NOT 1:1 with shots — only ~111 unique FFID values, so the `{89,11,11}` split's `test_mask` selects ~142 shots (all shots carrying the last 11 unique FFID values). The unet sibling test set holds 142 shots; the Physics backfill reproduces the same FFID ordering.
+- Impact: `--models physics` now matches and can be evaluated on the 0822 tree. Future Physics runs auto-save `test_set/`.

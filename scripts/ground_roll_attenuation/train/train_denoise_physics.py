@@ -46,6 +46,7 @@ from utils import (  # noqa: E402
     default_config_relpath_for_train_script,
     destroy_distributed,
     evaluate,
+    ffid_split_masks,
     init_distributed,
     load_config,
     maybe_wrap_ddp,
@@ -313,12 +314,13 @@ def main() -> None:
     pm = bool(loader_cfg.get("pin_memory", True))
     seed = int(cfg["experiment"]["seed"])
 
+    test_mask = None
     if "shot_split" in cfg.get("data", {}):
         ss = cfg["data"]["shot_split"]
-        n_train, n_val = int(ss["train"]), int(ss["val"])
-        unique = np.unique(per_shot_ffid)
-        train_mask = np.isin(per_shot_ffid, unique[:n_train])
-        val_mask = np.isin(per_shot_ffid, unique[n_train:n_train + n_val])
+        n_train, n_val, n_test = int(ss["train"]), int(ss["val"]), int(ss["test"])
+        train_mask, val_mask, test_mask = ffid_split_masks(
+            per_shot_ffid, n_train, n_val, n_test
+        )
 
         train_n, train_c, train_g = _patchify_triplets(noisy[train_mask], clean[train_mask], gr[train_mask], cfg)
         val_n, val_c, val_g = _patchify_triplets(noisy[val_mask], clean[val_mask], gr[val_mask], cfg)
@@ -330,6 +332,15 @@ def main() -> None:
         train_idx, val_idx = indices[n_val:], indices[:n_val]
         train_n, train_c, train_g = noisy_p[train_idx], clean_p[train_idx], gr_p[train_idx]
         val_n, val_c, val_g = noisy_p[val_idx], clean_p[val_idx], gr_p[val_idx]
+
+    # Persist the held-out test shots so batch evaluation can consume them.
+    if rank == 0 and test_mask is not None:
+        test_set_dir = exp_dir / "test_set"
+        test_set_dir.mkdir(parents=True, exist_ok=True)
+        np.save(test_set_dir / "input_shots.npy", noisy[test_mask])
+        np.save(test_set_dir / "target_shots.npy", gr[test_mask])
+        np.save(test_set_dir / "ffid.npy", per_shot_ffid[test_mask])
+        print(f"Saved test set ({int(test_mask.sum())} shots) to {test_set_dir}")
 
     train_ds = torch.utils.data.TensorDataset(
         torch.from_numpy(train_n), torch.from_numpy(train_c), torch.from_numpy(train_g)

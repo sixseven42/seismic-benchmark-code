@@ -644,6 +644,41 @@ def build_loaders(
     return train_loader, test_loader, train_sampler, eval_train_loader
 
 
+def ffid_split_masks(
+    per_shot_ffid: np.ndarray, n_train: int, n_val: int, n_test: int
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return (train, val, test) boolean masks from a shot-level FFID split.
+
+    Unique FFID values are sorted; the first ``n_train`` unique values form
+    the training split, the next ``n_val`` the validation split, and the
+    remaining ``n_test`` the test split.  All shots sharing an FFID value
+    stay in the same split.
+
+    Parameters
+    ----------
+    per_shot_ffid : 1-D array of FFID values, one per shot.
+    n_train, n_val, n_test : number of unique FFID values per split.
+
+    Returns
+    -------
+    (train_mask, val_mask, test_mask) : boolean arrays over *per_shot_ffid*.
+    """
+    unique_ffids = np.unique(per_shot_ffid)
+    if n_train + n_val + n_test > unique_ffids.size:
+        raise ValueError(
+            f"shot_split asks for {n_train}+{n_val}+{n_test} unique FFIDs "
+            f"but only {unique_ffids.size} are available."
+        )
+    train_ffids = unique_ffids[:n_train]
+    val_ffids = unique_ffids[n_train : n_train + n_val]
+    test_ffids = unique_ffids[n_train + n_val : n_train + n_val + n_test]
+    return (
+        np.isin(per_shot_ffid, train_ffids),
+        np.isin(per_shot_ffid, val_ffids),
+        np.isin(per_shot_ffid, test_ffids),
+    )
+
+
 def build_shot_split_loaders(
     cfg: Dict[str, Any],
     *,
@@ -682,21 +717,9 @@ def build_shot_split_loaders(
     n_val = int(shot_split["val"])
     n_test = int(shot_split["test"])
 
-    unique_ffids = np.unique(per_shot_ffid)
-    n_total_ffid = unique_ffids.size
-    if n_train + n_val + n_test > n_total_ffid:
-        raise ValueError(
-            f"shot_split asks for {n_train}+{n_val}+{n_test} shots "
-            f"but only {n_total_ffid} unique FFIDs available."
-        )
-
-    train_ffids = unique_ffids[:n_train]
-    val_ffids = unique_ffids[n_train : n_train + n_val]
-    test_ffids = unique_ffids[n_train + n_val : n_train + n_val + n_test]
-
-    train_mask = np.isin(per_shot_ffid, train_ffids)
-    val_mask = np.isin(per_shot_ffid, val_ffids)
-    test_mask = np.isin(per_shot_ffid, test_ffids)
+    train_mask, val_mask, test_mask = ffid_split_masks(
+        per_shot_ffid, n_train, n_val, n_test
+    )
 
     train_x, train_y = patchify_fn(input_shots[train_mask], target_shots[train_mask], cfg)
     val_x, val_y = patchify_fn(input_shots[val_mask], target_shots[val_mask], cfg)
